@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:super_clipboard/super_clipboard.dart';
@@ -246,11 +247,16 @@ class _RichTextEditorState extends State<RichTextEditor> {
       extension: extension,
     );
 
+    final imageData = jsonEncode({
+      'source': filePath,
+      'width': 400,
+    });
+
     final index = _controller.selection.baseOffset;
     _controller.replaceText(
       index,
       0,
-      BlockEmbed.image(filePath),
+      BlockEmbed('image', imageData),
       null,
     );
   }
@@ -436,7 +442,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
                 placeholder: '开始输入...',
                 autoFocus: false,
                 embedBuilders: [
-                  _ImageEmbedBuilder(),
+                  _ImageEmbedBuilder(controller: _controller),
                 ],
               ),
             ),
@@ -449,31 +455,350 @@ class _RichTextEditorState extends State<RichTextEditor> {
 
 /// 图片嵌入渲染器
 class _ImageEmbedBuilder extends EmbedBuilder {
+  final QuillController controller;
+
+  _ImageEmbedBuilder({required this.controller});
+
   @override
   String get key => 'image';
 
   @override
   Widget build(BuildContext context, EmbedContext embedContext) {
-    final imageUrl = embedContext.node.value.data as String;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width - 64,
+    final rawData = embedContext.node.value.data as String;
+
+    // 兼容旧格式（纯路径）和 JSON 格式
+    String source;
+    double width;
+    try {
+      final json = jsonDecode(rawData) as Map<String, dynamic>;
+      source = json['source'] as String;
+      width = (json['width'] as num?)?.toDouble() ?? 400.0;
+    } catch (_) {
+      source = rawData;
+      width = 400.0;
+    }
+
+    return _ResizableImage(
+      source: source,
+      initialWidth: width,
+      onWidthChanged: (newWidth) {
+        final newData = jsonEncode({
+          'source': source,
+          'width': newWidth.round(),
+        });
+        final offset = _findEmbedOffset(controller, embedContext.node);
+        if (offset >= 0) {
+          controller.replaceText(
+            offset,
+            1,
+            BlockEmbed('image', newData),
+            TextSelection.collapsed(offset: offset + 1),
+          );
+        }
+      },
+      onDelete: () {
+        final offset = _findEmbedOffset(controller, embedContext.node);
+        if (offset >= 0) {
+          controller.replaceText(offset, 1, '', null);
+        }
+      },
+    );
+  }
+
+  /// 在文档中查找 embed 节点的偏移位置
+  int _findEmbedOffset(QuillController controller, Node targetNode) {
+    return targetNode.documentOffset;
+  }
+}
+
+/// 可调整大小的图片组件
+class _ResizableImage extends StatefulWidget {
+  final String source;
+  final double initialWidth;
+  final ValueChanged<double> onWidthChanged;
+  final VoidCallback onDelete;
+
+  const _ResizableImage({
+    required this.source,
+    required this.initialWidth,
+    required this.onWidthChanged,
+    required this.onDelete,
+  });
+
+  @override
+  State<_ResizableImage> createState() => _ResizableImageState();
+}
+
+class _ResizableImageState extends State<_ResizableImage> {
+  late double _width;
+  bool _isSelected = false;
+  double? _originalWidth;
+
+  @override
+  void initState() {
+    super.initState();
+    _width = widget.initialWidth;
+    _resolveImageSize();
+  }
+
+  void _resolveImageSize() {
+    final provider = FileImage(File(widget.source));
+    provider.resolve(const ImageConfiguration()).addListener(
+      ImageStreamListener((info, _) {
+        if (mounted) {
+          setState(() {
+            _originalWidth = info.image.width.toDouble();
+          });
+        }
+      }),
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _ResizableImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialWidth != widget.initialWidth) {
+      _width = widget.initialWidth;
+    }
+  }
+
+  void _showContextMenu(TapDownDetails details) {
+    final renderBox = context.findRenderObject() as RenderBox;
+    final position = renderBox.localToGlobal(details.globalPosition);
+
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        position.dx + 1,
+        position.dy + 1,
+      ),
+      items: [
+        const PopupMenuItem(value: 'copy', child: Text('复制图片')),
+        const PopupMenuDivider(),
+        const PopupMenuItem(value: 'small', child: Text('小 (200px)')),
+        const PopupMenuItem(value: 'medium', child: Text('中 (400px)')),
+        const PopupMenuItem(value: 'large', child: Text('大 (600px)')),
+        const PopupMenuItem(value: 'original', child: Text('原始大小')),
+        const PopupMenuDivider(),
+        PopupMenuItem(
+          value: 'delete',
+          child: Text('删除图片', style: TextStyle(color: Theme.of(context).colorScheme.error)),
         ),
-        child: Image.file(
-          File(imageUrl),
-          fit: BoxFit.contain,
-          errorBuilder: (_, __, ___) => Container(
-            padding: const EdgeInsets.all(8),
-            color: Colors.grey.shade200,
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.broken_image, size: 16),
-                SizedBox(width: 4),
-                Text('图片无法加载', style: TextStyle(fontSize: 12)),
-              ],
+      ],
+    ).then((value) {
+      if (value == null || !mounted) return;
+      switch (value) {
+        case 'copy':
+          _copyImage();
+          break;
+        case 'small':
+          _updateWidth(200);
+          break;
+        case 'medium':
+          _updateWidth(400);
+          break;
+        case 'large':
+          _updateWidth(600);
+          break;
+        case 'original':
+          _updateWidth(_originalWidth ?? 800);
+          break;
+        case 'delete':
+          widget.onDelete();
+          break;
+      }
+    });
+  }
+
+  void _updateWidth(double newWidth, {bool saveToDocument = true}) {
+    setState(() => _width = newWidth);
+    if (saveToDocument) {
+      widget.onWidthChanged(newWidth);
+    }
+  }
+
+  /// 显示原图预览浮层
+  void _showImagePreview() {
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        opaque: false,
+        barrierDismissible: true,
+        barrierColor: Colors.black87,
+        pageBuilder: (_, __, ___) => _ImagePreviewOverlay(source: widget.source),
+      ),
+    );
+  }
+
+  /// 复制图片到剪贴板
+  Future<void> _copyImage() async {
+    try {
+      final file = File(widget.source);
+      if (!file.existsSync()) return;
+      final bytes = await file.readAsBytes();
+      final clipboard = SystemClipboard.instance;
+      if (clipboard == null) return;
+      final item = DataWriterItem();
+      item.add(Formats.png(bytes));
+      await clipboard.write([item]);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('图片已复制到剪贴板')),
+        );
+      }
+    } catch (e) {
+      debugPrint('复制图片失败: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: GestureDetector(
+      onTapDown: (_) => setState(() => _isSelected = true),
+      onTap: () => _showImagePreview(),
+      onSecondaryTapDown: _showContextMenu,
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _isSelected = true),
+        onExit: (_) => setState(() => _isSelected = false),
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          decoration: BoxDecoration(
+            border: _isSelected
+                ? Border.all(color: Theme.of(context).colorScheme.primary, width: 2)
+                : null,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: Image.file(
+                  File(widget.source),
+                  width: _width,
+                  fit: BoxFit.contain,
+                  errorBuilder: (context, error, stackTrace) => Container(
+                    width: _width,
+                    padding: const EdgeInsets.all(8),
+                    color: Colors.grey.shade200,
+                    child: const Row(
+                      children: [
+                        Icon(Icons.broken_image, size: 16),
+                        SizedBox(width: 4),
+                        Text('图片无法加载', style: TextStyle(fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              // 右下角拖拽调整大小手柄
+              if (_isSelected)
+                Positioned(
+                  right: 0,
+                  bottom: 0,
+                  child: GestureDetector(
+                    onHorizontalDragUpdate: (details) {
+                      final maxWidth = _originalWidth ?? 1200.0;
+                      final newWidth = (_width + details.delta.dx).clamp(100.0, maxWidth);
+                      _updateWidth(newWidth, saveToDocument: false);
+                    },
+                    onHorizontalDragEnd: (_) {
+                      widget.onWidthChanged(_width);
+                    },
+                    child: Container(
+                      width: 20,
+                      height: 20,
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surface,
+                        border: Border.all(
+                          color: Theme.of(context).colorScheme.primary,
+                          width: 1,
+                        ),
+                        borderRadius: const BorderRadius.only(
+                          topRight: Radius.circular(4),
+                        ),
+                      ),
+                      child: Icon(
+                        Icons.zoom_out_map,
+                        size: 10,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+      ),
+    );
+  }
+}
+
+/// 图片原图预览浮层（支持滚轮缩放、拖拽平移）
+class _ImagePreviewOverlay extends StatefulWidget {
+  final String source;
+  const _ImagePreviewOverlay({required this.source});
+
+  @override
+  State<_ImagePreviewOverlay> createState() => _ImagePreviewOverlayState();
+}
+
+class _ImagePreviewOverlayState extends State<_ImagePreviewOverlay> {
+  double _scale = 1.0;
+  Offset _offset = Offset.zero;
+  double _baseScale = 1.0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: Listener(
+        onPointerSignal: (event) {
+          if (event is PointerScrollEvent) {
+            setState(() {
+              final zoomDelta = -event.scrollDelta.dy / 300;
+              _scale = (_scale * (1 + zoomDelta)).clamp(0.5, 8.0);
+            });
+          }
+        },
+        child: GestureDetector(
+          onTap: () => Navigator.of(context).pop(),
+          onDoubleTap: () => Navigator.of(context).pop(),
+          onScaleStart: (_) => _baseScale = _scale,
+          onScaleUpdate: (details) {
+            setState(() {
+              _scale = (_baseScale * details.scale).clamp(0.5, 8.0);
+              _offset += details.focalPointDelta;
+            });
+          },
+          child: KeyboardListener(
+            focusNode: FocusNode(),
+            onKeyEvent: (event) {
+              if (event is KeyDownEvent &&
+                  event.logicalKey == LogicalKeyboardKey.escape) {
+                Navigator.of(context).pop();
+              }
+            },
+            child: Container(  // 图片背景不透明度
+              color: Colors.black.withValues(alpha: 0.05),
+              width: double.infinity,
+              height: double.infinity,
+              child: Center(
+                child: Transform.translate(
+                  offset: _offset,
+                  child: Transform.scale(
+                    scale: _scale,
+                    child: Image.file(
+                      File(widget.source),
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
         ),
