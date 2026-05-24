@@ -18,14 +18,10 @@ class StorageResult<T> {
   final bool success;
 
   /// 创建成功结果
-  StorageResult.success(this.data)
-      : error = null,
-        success = true;
+  StorageResult.success(this.data) : error = null, success = true;
 
   /// 创建失败结果
-  StorageResult.failure(this.error)
-      : data = null,
-        success = false;
+  StorageResult.failure(this.error) : data = null, success = false;
 }
 
 /// 笔记存储服务

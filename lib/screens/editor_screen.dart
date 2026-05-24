@@ -92,7 +92,9 @@ class _EditorScreenState extends State<EditorScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(result.success ? '笔记已复制' : (result.error ?? '复制失败')),
+              content: Text(
+                result.success ? '笔记已复制' : (result.error ?? '复制失败'),
+              ),
             ),
           );
         }
@@ -118,13 +120,15 @@ class _EditorScreenState extends State<EditorScreen> {
           ),
         );
         if (confirmed == true && mounted) {
-          final result = await widget.storageService.deleteNote(_currentNote.id);
+          final result = await widget.storageService.deleteNote(
+            _currentNote.id,
+          );
           if (result.success && mounted) {
             Navigator.of(context).pop();
           } else if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(result.error ?? '删除失败')),
-            );
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(result.error ?? '删除失败')));
           }
         }
         break;

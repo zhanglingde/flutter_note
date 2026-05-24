@@ -35,9 +35,9 @@ class _HomeScreenState extends State<HomeScreen> {
     } else {
       setState(() => _isLoading = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(result.error ?? '加载笔记失败')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(result.error ?? '加载笔记失败')));
       }
     }
   }
@@ -70,9 +70,9 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       _loadNotes();
     } else if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result.error ?? '创建笔记失败')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(result.error ?? '创建笔记失败')));
     }
   }
 
@@ -114,9 +114,9 @@ class _HomeScreenState extends State<HomeScreen> {
       if (result.success) {
         _loadNotes();
       } else if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(result.error ?? '删除笔记失败')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(result.error ?? '删除笔记失败')));
       }
     }
   }
