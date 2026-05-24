@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_quill/flutter_quill.dart';
@@ -37,6 +38,8 @@ class MarkdownAutoConverter {
     'strikethrough': RegExp(r'~~(.+?)~~'),
     // 行内代码：`代码`
     'code': RegExp(r'`([^`]+)`'),
+    // 图片：![alt](url)
+    'image': RegExp(r'!\[([^\]]*)\]\(([^)]+)\)'),
     // 无序列表：- 项目 或 * 项目（行首匹配）
     'bulletList': RegExp(r'^[-*]\s(.*)$'),
     // 有序列表：1. 项目（行首匹配）
@@ -130,6 +133,7 @@ class MarkdownAutoConverter {
     _convertItalic(textToCheck, checkStart, checkEnd);
     _convertStrikethrough(textToCheck, checkStart, checkEnd);
     _convertCode(textToCheck, checkStart, checkEnd);
+    _convertImage(textToCheck, checkStart, checkEnd);
   }
 
   /// 转换标题语法
@@ -286,6 +290,38 @@ class MarkdownAutoConverter {
         attribute: Attribute.inlineCode,
       );
       return; // 只转换第一个匹配
+    }
+  }
+
+  /// 转换图片语法 ![alt](url)
+  void _convertImage(String text, int textStart, int cursorPos) {
+    for (final match in patterns['image']!.allMatches(text)) {
+      final url = match.group(2) ?? '';
+      if (url.isEmpty) continue;
+
+      final matchStart = textStart + match.start;
+      final matchEnd = textStart + match.end;
+
+      if (cursorPos < matchEnd) continue;
+
+      final length = matchEnd - matchStart;
+      if (length <= 0) return;
+
+      try {
+        final imageData = jsonEncode({'source': url, 'width': 400});
+
+        final delta = Delta()
+          ..retain(matchStart)
+          ..delete(length)
+          ..insert({'image': imageData});
+
+        final newOffset = matchStart + 1;
+        final newSelection = TextSelection.collapsed(offset: newOffset);
+        controller.compose(delta, newSelection, ChangeSource.local);
+      } catch (e) {
+        debugPrint('MarkdownAutoConverter: 图片转换失败: $e');
+      }
+      return;
     }
   }
 

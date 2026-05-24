@@ -533,6 +533,7 @@ class _ResizableImageState extends State<_ResizableImage> {
   late double _width;
   bool _isSelected = false;
   double? _originalWidth;
+  bool _isDragging = false;
 
   @override
   void initState() {
@@ -541,8 +542,12 @@ class _ResizableImageState extends State<_ResizableImage> {
     _resolveImageSize();
   }
 
+  bool get _isNetworkUrl =>
+      widget.source.startsWith('http://') || widget.source.startsWith('https://');
+
   void _resolveImageSize() {
-    final provider = FileImage(File(widget.source));
+    final ImageProvider provider =
+        _isNetworkUrl ? NetworkImage(widget.source) : FileImage(File(widget.source));
     provider.resolve(const ImageConfiguration()).addListener(
       ImageStreamListener((info, _) {
         if (mounted) {
@@ -551,6 +556,36 @@ class _ResizableImageState extends State<_ResizableImage> {
           });
         }
       }),
+    );
+  }
+
+  Widget _buildImage() {
+    final errorWidget = Container(
+      width: _width,
+      padding: const EdgeInsets.all(8),
+      color: Colors.grey.shade200,
+      child: const Row(
+        children: [
+          Icon(Icons.broken_image, size: 16),
+          SizedBox(width: 4),
+          Text('图片无法加载', style: TextStyle(fontSize: 12)),
+        ],
+      ),
+    );
+
+    if (_isNetworkUrl) {
+      return Image.network(
+        widget.source,
+        width: _width,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => errorWidget,
+      );
+    }
+    return Image.file(
+      File(widget.source),
+      width: _width,
+      fit: BoxFit.contain,
+      errorBuilder: (_, __, ___) => errorWidget,
     );
   }
 
@@ -634,6 +669,14 @@ class _ResizableImageState extends State<_ResizableImage> {
   /// 复制图片到剪贴板
   Future<void> _copyImage() async {
     try {
+      if (_isNetworkUrl) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('网络图片暂不支持复制')),
+          );
+        }
+        return;
+      }
       final file = File(widget.source);
       if (!file.existsSync()) return;
       final bytes = await file.readAsBytes();
@@ -658,7 +701,7 @@ class _ResizableImageState extends State<_ResizableImage> {
       alignment: Alignment.centerLeft,
       child: GestureDetector(
       onTapDown: (_) => setState(() => _isSelected = true),
-      onTap: () => _showImagePreview(),
+      onTap: () { if (!_isDragging) _showImagePreview(); },
       onSecondaryTapDown: _showContextMenu,
       child: MouseRegion(
         onEnter: (_) => setState(() => _isSelected = true),
@@ -676,37 +719,35 @@ class _ResizableImageState extends State<_ResizableImage> {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(4),
-                child: Image.file(
-                  File(widget.source),
-                  width: _width,
-                  fit: BoxFit.contain,
-                  errorBuilder: (context, error, stackTrace) => Container(
-                    width: _width,
-                    padding: const EdgeInsets.all(8),
-                    color: Colors.grey.shade200,
-                    child: const Row(
-                      children: [
-                        Icon(Icons.broken_image, size: 16),
-                        SizedBox(width: 4),
-                        Text('图片无法加载', style: TextStyle(fontSize: 12)),
-                      ],
-                    ),
-                  ),
-                ),
+                child: _buildImage(),
               ),
               // 右下角拖拽调整大小手柄
               if (_isSelected)
                 Positioned(
                   right: 0,
                   bottom: 0,
-                  child: GestureDetector(
-                    onHorizontalDragUpdate: (details) {
+                  child: Listener(
+                    behavior: HitTestBehavior.opaque,
+                    onPointerDown: (_) {
+                      _isDragging = true;
+                    },
+                    onPointerMove: (event) {
+                      if (!_isDragging) return;
                       final maxWidth = _originalWidth ?? 1200.0;
-                      final newWidth = (_width + details.delta.dx).clamp(100.0, maxWidth);
+                      final newWidth = (_width + event.delta.dx).clamp(100.0, maxWidth);
                       _updateWidth(newWidth, saveToDocument: false);
                     },
-                    onHorizontalDragEnd: (_) {
-                      widget.onWidthChanged(_width);
+                    onPointerUp: (_) {
+                      if (_isDragging) {
+                        _isDragging = false;
+                        widget.onWidthChanged(_width);
+                      }
+                    },
+                    onPointerCancel: (_) {
+                      if (_isDragging) {
+                        _isDragging = false;
+                        widget.onWidthChanged(_width);
+                      }
                     },
                     child: Container(
                       width: 20,
@@ -752,6 +793,9 @@ class _ImagePreviewOverlayState extends State<_ImagePreviewOverlay> {
   Offset _offset = Offset.zero;
   double _baseScale = 1.0;
 
+  bool get _isNetworkUrl =>
+      widget.source.startsWith('http://') || widget.source.startsWith('https://');
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -792,10 +836,12 @@ class _ImagePreviewOverlayState extends State<_ImagePreviewOverlay> {
                   offset: _offset,
                   child: Transform.scale(
                     scale: _scale,
-                    child: Image.file(
-                      File(widget.source),
-                      fit: BoxFit.contain,
-                    ),
+                    child: Transform.scale(
+                    scale: _scale,
+                    child: _isNetworkUrl
+                        ? Image.network(widget.source, fit: BoxFit.contain)
+                        : Image.file(File(widget.source), fit: BoxFit.contain),
+                  ),
                   ),
                 ),
               ),

@@ -165,9 +165,28 @@ class _EditorScreenState extends State<EditorScreen> {
               }
             },
           ),
-          title: Text(
-            _currentNote.title.isEmpty ? '无标题' : _currentNote.title,
-            overflow: TextOverflow.ellipsis,
+          title: TextField(
+            controller: TextEditingController(text: _currentNote.title)
+              ..selection = TextSelection.collapsed(
+                offset: _currentNote.title.length,
+              ),
+            decoration: const InputDecoration(
+              hintText: '输入标题...',
+              border: InputBorder.none,
+              isDense: true,
+              contentPadding: EdgeInsets.zero,
+            ),
+            style: Theme.of(context).textTheme.titleMedium,
+            onChanged: (value) {
+              setState(() {
+                _currentNote = _currentNote.copyWith(
+                  title: value,
+                  updatedAt: DateTime.now(),
+                );
+                _hasChanges = true;
+              });
+              widget.storageService.scheduleAutoSave(_currentNote);
+            },
           ),
           actions: [
             if (_hasChanges)
