@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/note.dart';
 import '../services/note_storage_service.dart';
+import '../services/image_storage_service.dart';
 import 'editor_screen.dart';
 
 /// 首页 - 笔记列表
@@ -112,6 +113,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (confirmed == true) {
       final result = await widget.storageService.deleteNote(note.id);
       if (result.success) {
+        await ImageStorageService().deleteImagesForNote(note.id);
         _loadNotes();
       } else if (mounted) {
         ScaffoldMessenger.of(
