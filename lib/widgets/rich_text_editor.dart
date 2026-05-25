@@ -438,7 +438,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
               focusNode: _focusNode,
               scrollController: _scrollController,
               config: QuillEditorConfig(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.only(left: 100, top: 16, right: 100, bottom: 16),
                 placeholder: '开始输入...',
                 autoFocus: false,
                 embedBuilders: [

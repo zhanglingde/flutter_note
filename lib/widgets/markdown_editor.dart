@@ -244,7 +244,7 @@ class _MarkdownEditorState extends State<MarkdownEditor> {
   Widget _buildEditor() {
     return Container(
       color: Theme.of(context).colorScheme.surface,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.only(left: 100, top: 16, right: 100, bottom: 16),
       child: TextField(
         controller: _controller,
         focusNode: _focusNode,
@@ -266,7 +266,7 @@ class _MarkdownEditorState extends State<MarkdownEditor> {
       child: Markdown(
         data: _controller.text,
         extensionSet: md.ExtensionSet.gitHubWeb,
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.only(left: 100, top: 16, right: 100, bottom: 16),
         controller: _previewScrollController,
         styleSheet: MarkdownStyleSheet(
           h1: Theme.of(context).textTheme.headlineLarge,
