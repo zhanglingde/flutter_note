@@ -14,13 +14,16 @@ class MarkdownAutoConverter {
   /// 是否启用自动转换
   bool enabled;
 
+  /// 代码块语言回调（偏移量, 语言）
+  final void Function(int offset, String lang)? onCodeBlockCreated;
+
   /// 是否正在处理中（防止递归）
   bool _isProcessing = false;
 
   /// 上一次的文本长度（用于检测输入方向）
   int _lastTextLength = 0;
 
-  MarkdownAutoConverter({required this.controller, this.enabled = true}) {
+  MarkdownAutoConverter({required this.controller, this.enabled = true, this.onCodeBlockCreated}) {
     _lastTextLength = controller.document.length;
   }
 
@@ -205,12 +208,19 @@ class MarkdownAutoConverter {
     final match = patterns['codeBlock']!.firstMatch(lineText);
     if (match == null) return;
 
+    final lang = match.group(1)?.trim() ?? '';
+
     _applyBlockConversion(
       lineStart: lineStart,
       lineEnd: lineEnd,
       newText: '',
       attribute: Attribute.codeBlock,
     );
+
+    // 通知语言信息
+    if (lang.isNotEmpty && onCodeBlockCreated != null) {
+      onCodeBlockCreated!(lineStart, lang);
+    }
   }
 
   /// 转换粗体语法

@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:super_clipboard/super_clipboard.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:highlight/highlight.dart' as highlight;
+import 'package:highlight/languages/all.dart' as languages;
 import 'dart:convert';
 import '../utils/markdown_auto_converter.dart';
 import '../services/image_storage_service.dart';
@@ -34,6 +36,9 @@ class _RichTextEditorState extends State<RichTextEditor> {
   bool _isInitialized = false;
 
   final ImageStorageService _imageService = ImageStorageService();
+
+  /// 代码块语言映射：Block 的第一个 Line 偏移量 -> 语言
+  final Map<int, String> _codeBlockLanguages = {};
 
   /// Markdown 自动转换器
   MarkdownAutoConverter? _markdownConverter;
@@ -81,6 +86,9 @@ class _RichTextEditorState extends State<RichTextEditor> {
     _markdownConverter = MarkdownAutoConverter(
       controller: _controller,
       enabled: _markdownEnabled,
+      onCodeBlockCreated: (offset, lang) {
+        _codeBlockLanguages[offset] = lang;
+      },
     );
   }
 
@@ -268,6 +276,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
 
   @override
   void dispose() {
+    _autoScrollTimer?.cancel();
     HardwareKeyboard.instance.removeHandler(_handleGlobalKeyEvent);
     _controller.removeListener(_onContentChanged);
     _controller.dispose();
@@ -425,31 +434,318 @@ class _RichTextEditorState extends State<RichTextEditor> {
     );
   }
 
+  /// 代码块语法高亮主题色
+  static const _codeColors = {
+    'keyword': Color(0xFFC678DD),
+    'built_in': Color(0xFFE5C07B),
+    'type': Color(0xFFE5C07B),
+    'literal': Color(0xFFD19A66),
+    'number': Color(0xFFD19A66),
+    'regexp': Color(0xFF98C379),
+    'string': Color(0xFF98C379),
+    'subst': Color(0xFFE06C75),
+    'symbol': Color(0xFF61AFEF),
+    'class': Color(0xFFE5C07B),
+    'function': Color(0xFF61AFEF),
+    'title': Color(0xFF61AFEF),
+    'params': Color(0xFFABB2BF),
+    'comment': Color(0xFF7F848E),
+    'doctag': Color(0xFFC678DD),
+    'meta': Color(0xFFABB2BF),
+    'section': Color(0xFFE06C75),
+    'tag': Color(0xFFE06C75),
+    'name': Color(0xFFE06C75),
+    'attr': Color(0xFFD19A66),
+    'attribute': Color(0xFF98C379),
+    'variable': Color(0xFFE06C75),
+    'bullet': Color(0xFFD19A66),
+    'code': Color(0xFF98C379),
+    'emphasis': Color(0xFFC678DD),
+    'strong': Color(0xFFE5C07B),
+    'formula': Color(0xFFC678DD),
+    'addition': Color(0xFF98C379),
+    'deletion': Color(0xFFE06C75),
+  };
+
+  /// 自定义 textSpanBuilder：代码块内语法高亮
+  InlineSpan _codeHighlightSpanBuilder(
+    BuildContext context,
+    Node node,
+    int nodeOffset,
+    String text,
+    TextStyle? style,
+    GestureRecognizer? recognizer,
+  ) {
+    // node 是 Leaf（QuillText），parent 是 Line，Line.parent 是 Block
+    final line = node.parent;
+    if (line is! Line) {
+      return TextSpan(
+        text: text,
+        style: style,
+        recognizer: recognizer,
+        mouseCursor: recognizer != null ? SystemMouseCursors.click : null,
+      );
+    }
+
+    final block = line.parent;
+    if (block is! Block || !block.style.attributes.containsKey(Attribute.codeBlock.key)) {
+      return TextSpan(
+        text: text,
+        style: style,
+        recognizer: recognizer,
+        mouseCursor: recognizer != null ? SystemMouseCursors.click : null,
+      );
+    }
+
+    // 读取代码块语言，默认 dart
+    String lang = 'dart';
+    final blockOffset = block.first?.documentOffset ?? -1;
+    if (_codeBlockLanguages.containsKey(blockOffset)) {
+      final langValue = _codeBlockLanguages[blockOffset]!.toLowerCase();
+      if (languages.allLanguages.containsKey(langValue)) {
+        lang = langValue;
+      }
+    }
+
+    // 代码块语法高亮
+    final fullLineText = _getFullLineText(line);
+    final result = highlight.highlight.parse(fullLineText, language: lang);
+    final baseStyle = style?.copyWith(fontFamily: 'monospace') ??
+        const TextStyle(fontFamily: 'monospace');
+
+    return _buildHighlightedSpan(result.nodes, baseStyle, recognizer);
+  }
+
+  /// 获取 Line 的完整文本内容
+  String _getFullLineText(Line line) {
+    final buffer = StringBuffer();
+    for (final child in line.children) {
+      if (child is Leaf) {
+        buffer.write(child.toPlainText());
+      }
+    }
+    return buffer.toString();
+  }
+
+  /// 从 highlight 解析结果构建 TextSpan
+  TextSpan _buildHighlightedSpan(
+    List<highlight.Node>? nodes,
+    TextStyle baseStyle,
+    GestureRecognizer? recognizer,
+  ) {
+    if (nodes == null || nodes.isEmpty) {
+      return TextSpan(text: '', style: baseStyle);
+    }
+
+    final children = <TextSpan>[];
+    for (final node in nodes) {
+      if (node.value != null) {
+        children.add(TextSpan(
+          text: node.value,
+          style: node.className != null
+              ? baseStyle.copyWith(
+                  color: _codeColors[node.className],
+                )
+              : baseStyle,
+        ));
+      } else if (node.children != null) {
+        final childSpan = _buildHighlightedSpan(
+          node.children,
+          node.className != null
+              ? baseStyle.copyWith(color: _codeColors[node.className])
+              : baseStyle,
+          recognizer,
+        );
+        children.add(childSpan);
+      }
+    }
+
+    return TextSpan(
+      children: children,
+      style: baseStyle,
+      recognizer: recognizer,
+      mouseCursor: recognizer != null ? SystemMouseCursors.click : null,
+    );
+  }
+
+  /// 自定义代码块 leading：显示语言标签角标
+  Widget? _buildLeadingBlock(Node node, LeadingConfig config) {
+    // 只处理代码块的第一行
+    if (config.attribute != Attribute.codeBlock) return null;
+
+    final line = node;
+    if (line is! Line) return null;
+
+    final block = line.parent;
+    if (block is! Block) return null;
+
+    // 只在代码块第一行显示语言标签
+    if (block.first != line) return null;
+
+    // 从 Map 读取语言
+    final blockOffset = block.first?.documentOffset ?? -1;
+    final lang = _codeBlockLanguages[blockOffset];
+    if (lang == null || lang.isEmpty) return null;
+
+    return Padding(
+      padding: const EdgeInsets.only(right: 8, top: 4),
+      child: Align(
+        alignment: Alignment.topRight,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            lang.toUpperCase(),
+            style: TextStyle(
+              fontSize: 11,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontFamily: 'monospace',
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 是否正在拖拽选择文本
+  bool _isDragging = false;
+
+  /// 自动滚动定时器
+  Timer? _autoScrollTimer;
+
+  /// 自动滚动方向和速度（正=向下，负=向上，0=停止）
+  double _autoScrollVelocity = 0;
+
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
         _buildToolbar(),
         Expanded(
-          child: Container(
-            color: Theme.of(context).colorScheme.surface,
-            child: QuillEditor(
-              controller: _controller,
-              focusNode: _focusNode,
-              scrollController: _scrollController,
-              config: QuillEditorConfig(
-                padding: const EdgeInsets.only(left: 100, top: 16, right: 100, bottom: 16),
-                placeholder: '开始输入...',
-                autoFocus: false,
-                embedBuilders: [
-                  _ImageEmbedBuilder(controller: _controller),
-                ],
+          child: Listener(
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: (_) {
+              _isDragging = true;
+            },
+            onPointerUp: (_) {
+              _isDragging = false;
+              _autoScrollVelocity = 0;
+              _autoScrollTimer?.cancel();
+              _autoScrollTimer = null;
+            },
+            onPointerCancel: (_) {
+              _isDragging = false;
+              _autoScrollVelocity = 0;
+              _autoScrollTimer?.cancel();
+              _autoScrollTimer = null;
+            },
+            onPointerMove: (event) {
+              if (!_isDragging) return;
+              _handleAutoScroll(event.localPosition, event.kind);
+            },
+            onPointerSignal: _handlePointerSignal,
+            child: Container(
+              color: Theme.of(context).colorScheme.surface,
+              child: QuillEditor(
+                controller: _controller,
+                focusNode: _focusNode,
+                scrollController: _scrollController,
+                config: QuillEditorConfig(
+                  padding: const EdgeInsets.only(left: 100, top: 16, right: 100, bottom: 16),
+                  placeholder: '开始输入...',
+                  autoFocus: false,
+                  textSpanBuilder: _codeHighlightSpanBuilder,
+                  customLeadingBlockBuilder: _buildLeadingBlock,
+                  embedBuilders: [
+                    _ImageEmbedBuilder(controller: _controller),
+                  ],
+                ),
               ),
             ),
           ),
         ),
       ],
     );
+  }
+
+  /// 根据指针位置计算自动滚动速度
+  void _handleAutoScroll(Offset localPosition, PointerDeviceKind kind) {
+    if (kind != PointerDeviceKind.mouse && kind != PointerDeviceKind.touch) {
+      return;
+    }
+
+    final box = context.findRenderObject() as RenderBox;
+    final editorHeight = box.size.height;
+    final toolbarHeight = 48.0;
+    final availableHeight = editorHeight - toolbarHeight;
+    final y = localPosition.dy - toolbarHeight;
+
+    const edgeZone = 40.0;
+
+    if (y > availableHeight - edgeZone) {
+      // 靠近底部，向下滚动
+      final overflow = (y - (availableHeight - edgeZone)).clamp(0.0, edgeZone);
+      _autoScrollVelocity = (overflow / edgeZone) * 15.0;
+    } else if (y < edgeZone) {
+      // 靠近顶部，向上滚动
+      final underflow = (edgeZone - y).clamp(0.0, edgeZone);
+      _autoScrollVelocity = -(underflow / edgeZone) * 15.0;
+    } else {
+      _autoScrollVelocity = 0;
+      _autoScrollTimer?.cancel();
+      _autoScrollTimer = null;
+      return;
+    }
+
+    _startAutoScroll();
+  }
+
+  /// 启动自动滚动定时器
+  void _startAutoScroll() {
+    if (_autoScrollTimer?.isActive == true) return;
+
+    _autoScrollTimer = Timer.periodic(
+      const Duration(milliseconds: 16),
+      (_) {
+        if (!_isDragging || _autoScrollVelocity == 0) {
+          _autoScrollTimer?.cancel();
+          _autoScrollTimer = null;
+          return;
+        }
+        if (!_scrollController.hasClients) return;
+
+        final pos = _scrollController.position;
+        final target = (pos.pixels + _autoScrollVelocity)
+            .clamp(pos.minScrollExtent, pos.maxScrollExtent);
+        _scrollController.jumpTo(target);
+      },
+    );
+  }
+
+  /// 处理滚轮事件，修复代码块区域滚动被阻断
+  void _handlePointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) return;
+    if (!_scrollController.hasClients) return;
+
+    final pos = _scrollController.position;
+    if (!pos.hasContentDimensions) return;
+
+    final before = pos.pixels;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      final after = _scrollController.position.pixels;
+      if ((after - before).abs() < 0.5) {
+        final target = (_scrollController.position.pixels + event.scrollDelta.dy)
+            .clamp(_scrollController.position.minScrollExtent,
+                _scrollController.position.maxScrollExtent);
+        if ((target - _scrollController.position.pixels).abs() > 0.5) {
+          _scrollController.jumpTo(target);
+        }
+      }
+    });
   }
 }
 
