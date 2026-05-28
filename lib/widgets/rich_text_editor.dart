@@ -41,6 +41,16 @@ class _RichTextEditorState extends State<RichTextEditor> {
   /// 代码块语言映射：Block 的第一个 Line 偏移量 -> 语言
   final Map<int, String> _codeBlockLanguages = {};
 
+  /// 编辑器水平内边距
+  static const _editorHorizontalPadding = 100.0;
+
+  /// 语言标签的 GlobalKey，用于点击检测
+  final Map<int, GlobalKey> _langLabelKeys = {};
+  final Map<int, GlobalKey> _copyButtonKeys = {};
+
+  /// 用于检测 header 区域的 tap
+  Offset? _headerPointerDown;
+
   /// Markdown 自动转换器
   MarkdownAutoConverter? _markdownConverter;
 
@@ -684,10 +694,14 @@ class _RichTextEditorState extends State<RichTextEditor> {
     final currentLang = _codeBlockLanguages[blockOffset] ?? 'dart';
 
     const headerHeight = 28.0;
-    final headerWidth = MediaQuery.of(context).size.width;
+    final headerWidth = MediaQuery.of(context).size.width - _editorHorizontalPadding * 2;
+    final headerColor = Colors.grey.shade50;
+
+    final langKey = _langLabelKeys.putIfAbsent(blockOffset, () => GlobalKey(debugLabel: 'langLabel'));
+    final copyKey = _copyButtonKeys.putIfAbsent(blockOffset, () => GlobalKey(debugLabel: 'copyBtn'));
 
     return SizedBox(
-      height: headerHeight,
+      height: 0,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
@@ -698,52 +712,48 @@ class _RichTextEditorState extends State<RichTextEditor> {
               width: headerWidth,
               height: headerHeight,
               padding: const EdgeInsets.symmetric(horizontal: 12),
-              decoration: const BoxDecoration(
-                color: Color(0xFF282C34),
-                borderRadius: BorderRadius.vertical(top: Radius.circular(4)),
+              decoration: BoxDecoration(
+                color: headerColor,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(2)),
               ),
               child: Row(
                 children: [
-                  // 语言标签
-                  GestureDetector(
-                    onTap: () => _showLanguagePicker(blockOffset, currentLang),
-                    child: MouseRegion(
-                      cursor: SystemMouseCursors.click,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            currentLang.toUpperCase(),
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: Color(0xFFABB2BF),
-                              fontFamily: 'monospace',
-                              fontWeight: FontWeight.w600,
-                            ),
+                  // 语言标签（点击通过 Listener 在外层处理）
+                  MouseRegion(
+                    key: langKey,
+                    cursor: SystemMouseCursors.click,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          currentLang.toUpperCase(),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey.shade700,
+                            fontFamily: 'monospace',
+                            fontWeight: FontWeight.w600,
                           ),
-                          const SizedBox(width: 2),
-                          const Icon(
-                            Icons.arrow_drop_down,
-                            size: 14,
-                            color: Color(0xFF7F848E),
-                          ),
-                        ],
-                      ),
+                        ),
+                        const SizedBox(width: 2),
+                        Icon(
+                          Icons.arrow_drop_down,
+                          size: 14,
+                          color: Colors.grey.shade500,
+                        ),
+                      ],
                     ),
                   ),
                   const Spacer(),
-                  // 复制按钮
-                  GestureDetector(
-                    onTap: () => _copyCodeBlock(blockOffset),
-                    child: const Tooltip(
+                  // 复制按钮（点击通过 Listener 在外层处理）
+                  MouseRegion(
+                    key: copyKey,
+                    cursor: SystemMouseCursors.click,
+                    child: Tooltip(
                       message: '复制代码',
-                      child: MouseRegion(
-                        cursor: SystemMouseCursors.click,
-                        child: Icon(
-                          Icons.copy,
-                          size: 14,
-                          color: Color(0xFF7F848E),
-                        ),
+                      child: Icon(
+                        Icons.copy,
+                        size: 14,
+                        color: Colors.grey.shade500,
                       ),
                     ),
                   ),
@@ -763,6 +773,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
 
     showMenu<String>(
       context: context,
+      constraints: const BoxConstraints(maxHeight: 300),
       position: RelativeRect.fromLTRB(
         position.dx + 100,
         position.dy + 60,
@@ -824,14 +835,21 @@ class _RichTextEditorState extends State<RichTextEditor> {
         Expanded(
           child: Listener(
             behavior: HitTestBehavior.translucent,
-            onPointerDown: (_) {
+            onPointerDown: (event) {
               _isDragging = true;
+              _headerPointerDown = event.position;
             },
-            onPointerUp: (_) {
+            onPointerUp: (event) {
               _isDragging = false;
               _autoScrollVelocity = 0;
               _autoScrollTimer?.cancel();
               _autoScrollTimer = null;
+              // 检测代码块 header 区域的点击
+              if (_headerPointerDown != null &&
+                  (event.position - _headerPointerDown!).distance < 20) {
+                _handleHeaderTap(event.position);
+              }
+              _headerPointerDown = null;
             },
             onPointerCancel: (_) {
               _isDragging = false;
@@ -851,7 +869,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
                 focusNode: _focusNode,
                 scrollController: _scrollController,
                 config: QuillEditorConfig(
-                  padding: const EdgeInsets.only(left: 100, top: 16, right: 100, bottom: 16),
+                  padding: const EdgeInsets.only(left: _editorHorizontalPadding, top: 16, right: _editorHorizontalPadding, bottom: 16),
                   placeholder: '开始输入...',
                   autoFocus: false,
                   textSpanBuilder: _codeHighlightSpanBuilder,
@@ -866,6 +884,37 @@ class _RichTextEditorState extends State<RichTextEditor> {
         ),
       ],
     );
+  }
+
+  /// 检测代码块 header 区域的点击
+  void _handleHeaderTap(Offset globalPosition) {
+    // 检测语言标签点击
+    for (final entry in _langLabelKeys.entries) {
+      final ctx = entry.value.currentContext;
+      if (ctx == null) continue;
+      final renderBox = ctx.findRenderObject() as RenderBox?;
+      if (renderBox == null || !renderBox.hasSize) continue;
+      final pos = renderBox.localToGlobal(Offset.zero);
+      final rect = pos & renderBox.size;
+      if (rect.contains(globalPosition)) {
+        final currentLang = _codeBlockLanguages[entry.key] ?? 'dart';
+        _showLanguagePicker(entry.key, currentLang);
+        return;
+      }
+    }
+    // 检测复制按钮点击
+    for (final entry in _copyButtonKeys.entries) {
+      final ctx = entry.value.currentContext;
+      if (ctx == null) continue;
+      final renderBox = ctx.findRenderObject() as RenderBox?;
+      if (renderBox == null || !renderBox.hasSize) continue;
+      final pos = renderBox.localToGlobal(Offset.zero);
+      final rect = pos & renderBox.size;
+      if (rect.contains(globalPosition)) {
+        _copyCodeBlock(entry.key);
+        return;
+      }
+    }
   }
 
   /// 复制指定偏移量处的代码块内容
