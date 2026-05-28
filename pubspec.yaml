@@ -39,6 +39,7 @@ dependencies:
 
   # Rich text editor
   flutter_quill: ^11.4.1
+  dart_quill_delta: ^10.8.3
 
   # Markdown rendering
   flutter_markdown: ^0.7.7+1

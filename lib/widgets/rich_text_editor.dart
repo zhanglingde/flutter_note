@@ -8,6 +8,7 @@ import 'package:super_clipboard/super_clipboard.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:highlight/highlight.dart' as highlight;
 import 'package:highlight/languages/all.dart' as languages;
+import 'package:dart_quill_delta/dart_quill_delta.dart';
 import 'dart:convert';
 import '../utils/markdown_auto_converter.dart';
 import '../services/image_storage_service.dart';
@@ -73,6 +74,8 @@ class _RichTextEditorState extends State<RichTextEditor> {
           document: document,
           selection: TextSelection.collapsed(offset: document.length - 1),
         );
+        // 从已保存的文档中恢复代码块语言信息
+        _loadCodeBlockLanguages();
       } else {
         _controller = QuillController.basic();
       }
@@ -88,8 +91,97 @@ class _RichTextEditorState extends State<RichTextEditor> {
       enabled: _markdownEnabled,
       onCodeBlockCreated: (offset, lang) {
         _codeBlockLanguages[offset] = lang;
+        // 同时写入 Delta 持久化
+        _persistCodeBlockLang(offset, lang);
       },
     );
+  }
+
+  /// 从已保存的文档 Delta 中恢复代码块语言信息
+  void _loadCodeBlockLanguages() {
+    _codeBlockLanguages.clear();
+    for (final node in _controller.document.root.children) {
+      if (node is Block) {
+        final attrs = node.style.attributes;
+        if (attrs.containsKey(Attribute.codeBlock.key)) {
+          final firstLine = node.first;
+          if (firstLine is! Line) continue;
+          final blockOffset = firstLine.documentOffset;
+          if (blockOffset < 0) continue;
+
+          String? lang;
+
+          // 1. 检查 Block 样式
+          final blockLangAttr = attrs['code-block-lang'];
+          if (blockLangAttr != null && blockLangAttr.value != null) {
+            lang = blockLangAttr.value.toString();
+          }
+
+          // 2. 检查 Line 样式（\n 字符上的属性存储在 Line 级别）
+          if (lang == null) {
+            final lineLangAttr = firstLine.style.attributes['code-block-lang'];
+            if (lineLangAttr != null && lineLangAttr.value != null) {
+              lang = lineLangAttr.value.toString();
+            }
+          }
+
+          // 3. 回退：遍历第一行所有 Leaf 节点查找属性
+          if (lang == null) {
+            for (final child in firstLine.children) {
+              if (child is Leaf) {
+                final leafAttr = child.style.attributes['code-block-lang'];
+                if (leafAttr != null && leafAttr.value != null) {
+                  lang = leafAttr.value.toString();
+                  break;
+                }
+              }
+            }
+          }
+
+          if (lang != null) {
+            _codeBlockLanguages[blockOffset] = lang;
+          }
+        }
+      }
+    }
+  }
+
+  /// 将代码块语言写入 Delta 属性（持久化）
+  /// 写入到第一行末尾 \n 字符上，与 code-block 属性共存
+  void _persistCodeBlockLang(int blockOffset, String lang) {
+    try {
+      final block = _findBlockAtOffset(blockOffset);
+      if (block == null) return;
+      final firstLine = block.first;
+      if (firstLine is! Line) return;
+
+      // firstLine.length 包含 \n，所以 \n 的偏移 = blockOffset + firstLine.length - 1
+      final nlOffset = blockOffset + firstLine.length - 1;
+      final delta = Delta()
+        ..retain(nlOffset)
+        ..retain(1, {'code-block-lang': lang});
+      _controller.compose(
+        delta,
+        _controller.selection,
+        ChangeSource.local,
+      );
+    } catch (e) {
+      debugPrint('persistCodeBlockLang failed: $e');
+    }
+  }
+
+  /// 根据偏移量查找 Block 节点
+  Block? _findBlockAtOffset(int offset) {
+    for (final node in _controller.document.root.children) {
+      if (node is Block) {
+        final start = node.documentOffset;
+        final end = start + node.length;
+        if (offset >= start && offset <= end) {
+          return node;
+        }
+      }
+    }
+    return null;
   }
 
   void _onContentChanged() {
@@ -568,10 +660,16 @@ class _RichTextEditorState extends State<RichTextEditor> {
     );
   }
 
-  /// 自定义代码块 leading：显示语言标签角标
+  /// 自定义代码块 leading：在第一行上方渲染 header
+  static const _langOptions = [
+    'dart', 'java', 'javascript', 'typescript', 'python', 'sql',
+    'kotlin', 'swift', 'go', 'rust', 'c', 'cpp', 'csharp',
+    'ruby', 'php', 'html', 'css', 'json', 'yaml', 'xml',
+    'bash', 'shell', 'markdown', 'plaintext',
+  ];
+
   Widget? _buildLeadingBlock(Node node, LeadingConfig config) {
-    // 只处理代码块的第一行
-    if (config.attribute != Attribute.codeBlock) return null;
+    if (config.attribute.key != Attribute.codeBlock.key) return null;
 
     final line = node;
     if (line is! Line) return null;
@@ -579,35 +677,134 @@ class _RichTextEditorState extends State<RichTextEditor> {
     final block = line.parent;
     if (block is! Block) return null;
 
-    // 只在代码块第一行显示语言标签
+    // 只在代码块第一行显示 header
     if (block.first != line) return null;
 
-    // 从 Map 读取语言
     final blockOffset = block.first?.documentOffset ?? -1;
-    final lang = _codeBlockLanguages[blockOffset];
-    if (lang == null || lang.isEmpty) return null;
+    final currentLang = _codeBlockLanguages[blockOffset] ?? 'dart';
 
-    return Padding(
-      padding: const EdgeInsets.only(right: 8, top: 4),
-      child: Align(
-        alignment: Alignment.topRight,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Text(
-            lang.toUpperCase(),
-            style: TextStyle(
-              fontSize: 11,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-              fontFamily: 'monospace',
+    const headerHeight = 28.0;
+    final headerWidth = MediaQuery.of(context).size.width;
+
+    return SizedBox(
+      height: headerHeight,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned(
+            top: -headerHeight,
+            left: 0,
+            child: Container(
+              width: headerWidth,
+              height: headerHeight,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: const BoxDecoration(
+                color: Color(0xFF282C34),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(4)),
+              ),
+              child: Row(
+                children: [
+                  // 语言标签
+                  GestureDetector(
+                    onTap: () => _showLanguagePicker(blockOffset, currentLang),
+                    child: MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            currentLang.toUpperCase(),
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Color(0xFFABB2BF),
+                              fontFamily: 'monospace',
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(width: 2),
+                          const Icon(
+                            Icons.arrow_drop_down,
+                            size: 14,
+                            color: Color(0xFF7F848E),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  // 复制按钮
+                  GestureDetector(
+                    onTap: () => _copyCodeBlock(blockOffset),
+                    child: const Tooltip(
+                      message: '复制代码',
+                      child: MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: Icon(
+                          Icons.copy,
+                          size: 14,
+                          color: Color(0xFF7F848E),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
+        ],
       ),
     );
+  }
+
+  /// 弹出语言选择器
+  void _showLanguagePicker(int blockOffset, String currentLang) {
+    final renderBox = context.findRenderObject() as RenderBox;
+    final position = renderBox.localToGlobal(Offset.zero);
+
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        position.dx + 100,
+        position.dy + 60,
+        position.dx + 200,
+        position.dy + 60,
+      ),
+      items: _langOptions
+          .map((lang) => PopupMenuItem(
+                value: lang,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      lang,
+                      style: TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 12,
+                        color: lang == currentLang
+                            ? Theme.of(context).colorScheme.primary
+                            : null,
+                      ),
+                    ),
+                    if (lang == currentLang) ...[
+                      const SizedBox(width: 8),
+                      Icon(
+                        Icons.check,
+                        size: 14,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ],
+                  ],
+                ),
+              ))
+          .toList(),
+    ).then((value) {
+      if (value != null) {
+        setState(() {
+          _codeBlockLanguages[blockOffset] = value;
+        });
+        _persistCodeBlockLang(blockOffset, value);
+      }
+    });
   }
 
   /// 是否正在拖拽选择文本
@@ -668,6 +865,30 @@ class _RichTextEditorState extends State<RichTextEditor> {
           ),
         ),
       ],
+    );
+  }
+
+  /// 复制指定偏移量处的代码块内容
+  void _copyCodeBlock(int blockOffset) {
+    final block = _findBlockAtOffset(blockOffset);
+    if (block == null) return;
+    _doCopyBlock(block);
+  }
+
+  void _doCopyBlock(Block block) {
+    final buffer = StringBuffer();
+    for (final child in block.children) {
+      if (child is Line) {
+        buffer.writeln(child.toPlainText());
+      }
+    }
+    final text = buffer.toString().trimRight();
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('复制成功'),
+        duration: Duration(seconds: 1),
+      ),
     );
   }
 
