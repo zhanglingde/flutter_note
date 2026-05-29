@@ -44,6 +44,9 @@ class _RichTextEditorState extends State<RichTextEditor> {
   /// 编辑器水平内边距
   static const _editorHorizontalPadding = 100.0;
 
+  /// 编辑器内容区域实际宽度（由 LayoutBuilder 更新）
+  double _editorContentWidth = 0;
+
   /// 语言标签的 GlobalKey，用于点击检测
   final Map<int, GlobalKey> _langLabelKeys = {};
   final Map<int, GlobalKey> _copyButtonKeys = {};
@@ -694,8 +697,10 @@ class _RichTextEditorState extends State<RichTextEditor> {
     final currentLang = _codeBlockLanguages[blockOffset] ?? 'dart';
 
     const headerHeight = 28.0;
-    final headerWidth = MediaQuery.of(context).size.width - _editorHorizontalPadding * 2;
-    final headerColor = Colors.grey.shade50;
+    final headerWidth = _editorContentWidth > 0
+        ? _editorContentWidth
+        : MediaQuery.of(context).size.width - _editorHorizontalPadding * 2;
+    const headerColor = Color(0xFFF1F1F1);
 
     final langKey = _langLabelKeys.putIfAbsent(blockOffset, () => GlobalKey(debugLabel: 'langLabel'));
     final copyKey = _copyButtonKeys.putIfAbsent(blockOffset, () => GlobalKey(debugLabel: 'copyBtn'));
@@ -707,14 +712,14 @@ class _RichTextEditorState extends State<RichTextEditor> {
         children: [
           Positioned(
             top: -headerHeight,
-            left: 0,
+            left: -16,
             child: Container(
               width: headerWidth,
               height: headerHeight,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              decoration: BoxDecoration(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              decoration: const BoxDecoration(
                 color: headerColor,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(2)),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(2)),
               ),
               child: Row(
                 children: [
@@ -864,21 +869,39 @@ class _RichTextEditorState extends State<RichTextEditor> {
             onPointerSignal: _handlePointerSignal,
             child: Container(
               color: Theme.of(context).colorScheme.surface,
-              child: QuillEditor(
-                controller: _controller,
-                focusNode: _focusNode,
-                scrollController: _scrollController,
-                config: QuillEditorConfig(
-                  padding: const EdgeInsets.only(left: _editorHorizontalPadding, top: 16, right: _editorHorizontalPadding, bottom: 16),
-                  placeholder: '开始输入...',
-                  autoFocus: false,
-                  textSpanBuilder: _codeHighlightSpanBuilder,
-                  customLeadingBlockBuilder: _buildLeadingBlock,
-                  embedBuilders: [
-                    _ImageEmbedBuilder(controller: _controller),
-                  ],
-                ),
-              ),
+              child: LayoutBuilder(builder: (context, boxConstraints) {
+              _editorContentWidth = boxConstraints.maxWidth - _editorHorizontalPadding * 2;
+              final defaultStyles = DefaultStyles.getInstance(context);
+              return QuillStyles(
+                  data: defaultStyles.merge(DefaultStyles(
+                    code: DefaultTextBlockStyle(
+                      defaultStyles.code!.style,
+                      defaultStyles.code!.horizontalSpacing,
+                      defaultStyles.code!.verticalSpacing,
+                      defaultStyles.code!.lineSpacing,
+                      const BoxDecoration(
+                        color: Color(0xFFEDEDED),
+                        borderRadius: BorderRadius.all(Radius.circular(2)),
+                      ),
+                    ),
+                  )),
+                  child: QuillEditor(
+                    controller: _controller,
+                    focusNode: _focusNode,
+                    scrollController: _scrollController,
+                    config: QuillEditorConfig(
+                      padding: const EdgeInsets.only(left: _editorHorizontalPadding, top: 16, right: _editorHorizontalPadding, bottom: 16),
+                      placeholder: '开始输入...',
+                      autoFocus: false,
+                      textSpanBuilder: _codeHighlightSpanBuilder,
+                      customLeadingBlockBuilder: _buildLeadingBlock,
+                      embedBuilders: [
+                        _ImageEmbedBuilder(controller: _controller),
+                      ],
+                    ),
+                  ),
+                );
+              }),
             ),
           ),
         ),
