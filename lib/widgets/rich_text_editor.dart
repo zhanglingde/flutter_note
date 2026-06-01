@@ -470,56 +470,52 @@ class _RichTextEditorState extends State<RichTextEditor> {
           bottom: BorderSide(color: Theme.of(context).dividerColor),
         ),
       ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: Row(
-          children: [
-            IconButton(
-              icon: const Icon(Icons.undo, size: 20),
-              onPressed: _controller.hasUndo ? _controller.undo : null,
-              tooltip: '撤销',
-            ),
-            IconButton(
-              icon: const Icon(Icons.redo, size: 20),
-              onPressed: _controller.hasRedo ? _controller.redo : null,
-              tooltip: '重做',
-            ),
-            _toolbarDivider(),
-            _buildParagraphMenu(),
-            _toolbarDivider(),
-            _buildFormatMenu(),
-            _toolbarDivider(),
-            // 粘贴图片按钮
-            IconButton(
-              icon: const Icon(Icons.content_paste, size: 20),
-              onPressed: _pasteImageFromClipboard,
-              tooltip: '粘贴图片',
-            ),
-            // 选择图片按钮
-            IconButton(
-              icon: const Icon(Icons.image_outlined, size: 20),
-              onPressed: _pickImageFromFile,
-              tooltip: '选择图片',
-            ),
-            _toolbarDivider(),
-            Tooltip(
-              message: _markdownEnabled
-                  ? 'Markdown 自动转换：开'
-                  : 'Markdown 自动转换：关',
-              child: IconButton(
-                icon: Icon(
-                  Icons.code,
-                  size: 20,
-                  color: _markdownEnabled
-                      ? Theme.of(context).colorScheme.primary
-                      : Theme.of(context).colorScheme.outline,
-                ),
-                onPressed: toggleMarkdown,
+      child: Row(
+        children: [
+          // 左侧：菜单和图片按钮
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Row(
+                children: [
+                  _buildParagraphMenu(),
+                  _toolbarDivider(),
+                  _buildFormatMenu(),
+                  _toolbarDivider(),
+                  // 粘贴图片按钮
+                  IconButton(
+                    icon: const Icon(Icons.content_paste, size: 20),
+                    onPressed: _pasteImageFromClipboard,
+                    tooltip: '粘贴图片',
+                  ),
+                  // 选择图片按钮
+                  IconButton(
+                    icon: const Icon(Icons.image_outlined, size: 20),
+                    onPressed: _pickImageFromFile,
+                    tooltip: '选择图片',
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
+          ),
+          // 右侧：Markdown 开关
+          Tooltip(
+            message: _markdownEnabled
+                ? 'Markdown 自动转换：开'
+                : 'Markdown 自动转换：关',
+            child: IconButton(
+              icon: Icon(
+                Icons.code,
+                size: 20,
+                color: _markdownEnabled
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).colorScheme.outline,
+              ),
+              onPressed: toggleMarkdown,
+            ),
+          ),
+        ],
       ),
     );
   }
