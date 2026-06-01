@@ -86,14 +86,31 @@ class _RichTextEditorState extends State<RichTextEditor> {
         _controller = QuillController(
           document: document,
           selection: TextSelection.collapsed(offset: document.length - 1),
+          config: QuillControllerConfig(
+            clipboardConfig: QuillClipboardConfig(
+              onClipboardPaste: _onClipboardPaste,
+            ),
+          ),
         );
         // 从已保存的文档中恢复代码块语言信息
         _loadCodeBlockLanguages();
       } else {
-        _controller = QuillController.basic();
+        _controller = QuillController.basic(
+          config: QuillControllerConfig(
+            clipboardConfig: QuillClipboardConfig(
+              onClipboardPaste: _onClipboardPaste,
+            ),
+          ),
+        );
       }
     } catch (e) {
-      _controller = QuillController.basic();
+      _controller = QuillController.basic(
+        config: QuillControllerConfig(
+          clipboardConfig: QuillClipboardConfig(
+            onClipboardPaste: _onClipboardPaste,
+          ),
+        ),
+      );
     }
 
     _controller.addListener(_onContentChanged);
@@ -231,21 +248,8 @@ class _RichTextEditorState extends State<RichTextEditor> {
     }
   }
 
-  /// 全局键盘事件：在 Quill 处理之前拦截 Ctrl+V
-  bool _handleGlobalKeyEvent(KeyEvent event) {
-    if (!_focusNode.hasFocus) return false;
-
-    if (event is KeyDownEvent &&
-        event.logicalKey == LogicalKeyboardKey.keyV &&
-        HardwareKeyboard.instance.isControlPressed) {
-      _handlePaste();
-      return true; // 消费事件，阻止 Quill 默认粘贴
-    }
-    return false;
-  }
-
-  /// 统一粘贴处理：优先图片，其次文本
-  Future<void> _handlePaste() async {
+  /// 自定义粘贴回调：处理图片粘贴和代码块内纯文本粘贴
+  Future<bool> _onClipboardPaste() async {
     // 1. 检查剪贴板是否有图片
     try {
       final clipboard = SystemClipboard.instance;
@@ -258,24 +262,90 @@ class _RichTextEditorState extends State<RichTextEditor> {
           final bytes = await _readClipboardFile(reader, format);
           if (bytes != null) {
             await _insertImage(bytes, extension: ext);
-            return;
+            return true;
           }
         }
       }
     } catch (_) {}
 
-    // 2. 没有图片，粘贴文本
-    final data = await Clipboard.getData(Clipboard.kTextPlain);
-    if (data?.text != null && data!.text!.isNotEmpty) {
-      final index = _controller.selection.baseOffset;
-      final length = _controller.selection.extentOffset - index;
-      _controller.replaceText(
-        index,
-        length,
-        data.text!,
-        TextSelection.collapsed(offset: index + data.text!.length),
-      );
+    // 2. 代码块内：只粘贴纯文本（避免 HTML 格式破坏代码块）
+    if (_isCursorInCodeBlock()) {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      if (data?.text != null && data!.text!.isNotEmpty) {
+        final index = _controller.selection.baseOffset;
+        final length = _controller.selection.extentOffset - index;
+        _controller.replaceText(
+          index,
+          length,
+          data.text!,
+          TextSelection.collapsed(offset: index + data.text!.length),
+        );
+      }
+      return true;
     }
+
+    // 3. 非代码块：让 Quill 处理（支持富文本粘贴）
+    return false;
+  }
+
+  /// 检查当前光标是否在代码块内
+  bool _isCursorInCodeBlock() {
+    final offset = _controller.selection.baseOffset;
+    if (offset < 0) return false;
+    for (final node in _controller.document.root.children) {
+      if (node is Block) {
+        final start = node.documentOffset;
+        final end = start + node.length;
+        if (offset >= start && offset < end) {
+          return node.style.attributes.containsKey(Attribute.codeBlock.key);
+        }
+      }
+    }
+    return false;
+  }
+
+  /// 全局键盘事件：拦截代码块内 Ctrl+A 实现渐进式全选
+  bool _handleGlobalKeyEvent(KeyEvent event) {
+    if (!_focusNode.hasFocus) return false;
+    if (event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.keyA &&
+        HardwareKeyboard.instance.isControlPressed) {
+      return _handleSelectAll();
+    }
+    return false;
+  }
+
+  /// 渐进式全选：代码块内先选代码块，再按一次全选文档
+  bool _handleSelectAll() {
+    final selection = _controller.selection;
+    if (!selection.isValid) return false;
+
+    final offset = selection.baseOffset;
+
+    // 查找包含选区起点的代码块
+    for (final node in _controller.document.root.children) {
+      if (node is Block) {
+        final start = node.documentOffset;
+        final end = start + node.length;
+        if (offset >= start && offset < end &&
+            node.style.attributes.containsKey(Attribute.codeBlock.key)) {
+          // 已选中整个代码块 → 放行，让 Quill 全选文档
+          if (selection.start <= start &&
+              selection.end >= end - 1) {
+            return false;
+          }
+          // 选中代码块
+          _controller.updateSelection(
+            TextSelection(baseOffset: start, extentOffset: end - 1),
+            ChangeSource.local,
+          );
+          return true;
+        }
+      }
+    }
+
+    // 不在代码块内，默认全选
+    return false;
   }
 
   /// 从剪贴板粘贴图片
@@ -868,7 +938,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
             },
             onPointerSignal: _handlePointerSignal,
             child: Container(
-              color: Theme.of(context).colorScheme.surface,
+              color: Colors.white,
               child: LayoutBuilder(builder: (context, boxConstraints) {
               _editorContentWidth = boxConstraints.maxWidth - _editorHorizontalPadding * 2;
               final defaultStyles = DefaultStyles.getInstance(context);
