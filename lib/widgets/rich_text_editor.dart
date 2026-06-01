@@ -1192,9 +1192,15 @@ class _ImageEmbedBuilder extends EmbedBuilder {
       width = 400.0;
     }
 
+    // 提取文档中所有图片路径和当前图片的索引
+    final allImages = _collectImageSources();
+    final currentIndex = allImages.indexOf(source);
+
     return _ResizableImage(
       source: source,
       initialWidth: width,
+      allImages: allImages,
+      currentIndex: currentIndex >= 0 ? currentIndex : 0,
       onWidthChanged: (newWidth) {
         final newData = jsonEncode({
           'source': source,
@@ -1219,6 +1225,27 @@ class _ImageEmbedBuilder extends EmbedBuilder {
     );
   }
 
+  /// 收集文档中所有图片的 source 路径（按出现顺序）
+  List<String> _collectImageSources() {
+    final sources = <String>[];
+    for (final op in controller.document.toDelta().toList()) {
+      if (op.data is Map) {
+        final data = op.data as Map;
+        if (data.containsKey('image')) {
+          final raw = data['image'] as String;
+          try {
+            final json = jsonDecode(raw) as Map<String, dynamic>;
+            final src = json['source'] as String?;
+            if (src != null) sources.add(src);
+          } catch (_) {
+            sources.add(raw);
+          }
+        }
+      }
+    }
+    return sources;
+  }
+
   /// 在文档中查找 embed 节点的偏移位置
   int _findEmbedOffset(QuillController controller, Node targetNode) {
     return targetNode.documentOffset;
@@ -1231,12 +1258,16 @@ class _ResizableImage extends StatefulWidget {
   final double initialWidth;
   final ValueChanged<double> onWidthChanged;
   final VoidCallback onDelete;
+  final List<String> allImages;
+  final int currentIndex;
 
   const _ResizableImage({
     required this.source,
     required this.initialWidth,
     required this.onWidthChanged,
     required this.onDelete,
+    required this.allImages,
+    required this.currentIndex,
   });
 
   @override
@@ -1375,7 +1406,10 @@ class _ResizableImageState extends State<_ResizableImage> {
         opaque: false,
         barrierDismissible: true,
         barrierColor: Colors.black87,
-        pageBuilder: (_, __, ___) => _ImagePreviewOverlay(source: widget.source),
+        pageBuilder: (_, __, ___) => _ImagePreviewOverlay(
+          images: widget.allImages,
+          initialIndex: widget.currentIndex,
+        ),
       ),
     );
   }
@@ -1493,71 +1527,205 @@ class _ResizableImageState extends State<_ResizableImage> {
   }
 }
 
-/// 图片原图预览浮层（支持滚轮缩放、拖拽平移）
+/// 图片原图预览浮层（支持滚轮缩放、拖拽平移、多图导航）
 class _ImagePreviewOverlay extends StatefulWidget {
-  final String source;
-  const _ImagePreviewOverlay({required this.source});
+  final List<String> images;
+  final int initialIndex;
+  const _ImagePreviewOverlay({
+    required this.images,
+    required this.initialIndex,
+  });
 
   @override
   State<_ImagePreviewOverlay> createState() => _ImagePreviewOverlayState();
 }
 
 class _ImagePreviewOverlayState extends State<_ImagePreviewOverlay> {
+  late int _currentIndex;
   double _scale = 1.0;
   Offset _offset = Offset.zero;
   double _baseScale = 1.0;
+  late FocusNode _focusNode;
 
-  bool get _isNetworkUrl =>
-      widget.source.startsWith('http://') || widget.source.startsWith('https://');
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.initialIndex.clamp(0, widget.images.length - 1);
+    _focusNode = FocusNode();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _focusNode.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _goToImage(int index) {
+    setState(() {
+      _currentIndex = index;
+      _scale = 1.0;
+      _offset = Offset.zero;
+    });
+  }
+
+  Widget _buildImage(String source) {
+    final isNetwork = source.startsWith('http://') || source.startsWith('https://');
+    return isNetwork
+        ? Image.network(source, fit: BoxFit.contain)
+        : Image.file(File(source), fit: BoxFit.contain);
+  }
+
+  Widget _buildThumbnail(String source, int index, bool isActive) {
+    const size = 40.0;
+    final isNetwork = source.startsWith('http://') || source.startsWith('https://');
+    return GestureDetector(
+      onTap: () => _goToImage(index),
+      child: Container(
+        width: size,
+        height: size,
+        margin: const EdgeInsets.symmetric(horizontal: 2),
+        decoration: BoxDecoration(
+          border: isActive
+              ? Border.all(color: Colors.white, width: 2)
+              : Border.all(color: Colors.white24, width: 1),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(3),
+          child: isNetwork
+              ? Image.network(source, fit: BoxFit.cover)
+              : Image.file(File(source), fit: BoxFit.cover),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final hasPrev = _currentIndex > 0;
+    final hasNext = _currentIndex < widget.images.length - 1;
+
     return Scaffold(
       backgroundColor: Colors.transparent,
-      body: Listener(
-        onPointerSignal: (event) {
-          if (event is PointerScrollEvent) {
-            setState(() {
-              final zoomDelta = -event.scrollDelta.dy / 300;
-              _scale = (_scale * (1 + zoomDelta)).clamp(0.5, 8.0);
-            });
+      body: KeyboardListener(
+        focusNode: _focusNode,
+        onKeyEvent: (event) {
+          if (event is! KeyDownEvent) return;
+          if (event.logicalKey == LogicalKeyboardKey.escape) {
+            Navigator.of(context).pop();
+          } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft && hasPrev) {
+            _goToImage(_currentIndex - 1);
+          } else if (event.logicalKey == LogicalKeyboardKey.arrowRight && hasNext) {
+            _goToImage(_currentIndex + 1);
           }
         },
-        child: GestureDetector(
-          onTap: () => Navigator.of(context).pop(),
-          onDoubleTap: () => Navigator.of(context).pop(),
-          onScaleStart: (_) => _baseScale = _scale,
-          onScaleUpdate: (details) {
-            setState(() {
-              _scale = (_baseScale * details.scale).clamp(0.5, 8.0);
-              _offset += details.focalPointDelta;
-            });
+        child: Listener(
+          onPointerSignal: (event) {
+            if (event is PointerScrollEvent) {
+              setState(() {
+                final zoomDelta = -event.scrollDelta.dy / 300;
+                _scale = (_scale * (1 + zoomDelta)).clamp(0.5, 8.0);
+              });
+            }
           },
-          child: KeyboardListener(
-            focusNode: FocusNode(),
-            onKeyEvent: (event) {
-              if (event is KeyDownEvent &&
-                  event.logicalKey == LogicalKeyboardKey.escape) {
-                Navigator.of(context).pop();
-              }
+          child: GestureDetector(
+            onTap: () => Navigator.of(context).pop(),
+            onDoubleTap: () => Navigator.of(context).pop(),
+            onScaleStart: (_) => _baseScale = _scale,
+            onScaleUpdate: (details) {
+              setState(() {
+                _scale = (_baseScale * details.scale).clamp(0.5, 8.0);
+                _offset += details.focalPointDelta;
+              });
             },
-            child: Container(  // 图片背景不透明度
+            child: Container(
               color: Colors.black.withValues(alpha: 0.05),
               width: double.infinity,
               height: double.infinity,
-              child: Center(
-                child: Transform.translate(
-                  offset: _offset,
-                  child: Transform.scale(
-                    scale: _scale,
-                    child: Transform.scale(
-                    scale: _scale,
-                    child: _isNetworkUrl
-                        ? Image.network(widget.source, fit: BoxFit.contain)
-                        : Image.file(File(widget.source), fit: BoxFit.contain),
+              child: Stack(
+                children: [
+                  // 图片
+                  Center(
+                    child: Transform.translate(
+                      offset: _offset,
+                      child: Transform.scale(
+                        scale: _scale,
+                        child: Transform.scale(
+                          scale: _scale,
+                          child: _buildImage(widget.images[_currentIndex]),
+                        ),
+                      ),
+                    ),
                   ),
-                  ),
-                ),
+                  // 左箭头
+                  if (hasPrev)
+                    Positioned(
+                      left: 16,
+                      top: 0,
+                      bottom: 0,
+                      child: Center(
+                        child: IconButton(
+                          onPressed: () => _goToImage(_currentIndex - 1),
+                          icon: const Icon(Icons.chevron_left, size: 36),
+                          style: IconButton.styleFrom(
+                            backgroundColor: Colors.black45,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  // 右箭头
+                  if (hasNext)
+                    Positioned(
+                      right: 16,
+                      top: 0,
+                      bottom: 0,
+                      child: Center(
+                        child: IconButton(
+                          onPressed: () => _goToImage(_currentIndex + 1),
+                          icon: const Icon(Icons.chevron_right, size: 36),
+                          style: IconButton.styleFrom(
+                            backgroundColor: Colors.black45,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  // 底部缩略图条
+                  if (widget.images.length > 1)
+                    Positioned(
+                      bottom: 16,
+                      left: 0,
+                      right: 0,
+                      child: Center(
+                        child: Container(
+                          constraints: const BoxConstraints(maxWidth: 480),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black45,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              for (int i = 0; i < widget.images.length; i++)
+                                _buildThumbnail(
+                                  widget.images[i],
+                                  i,
+                                  i == _currentIndex,
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
