@@ -37,7 +37,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadNotes() async {
     setState(() => _isLoading = true);
-    final result = widget.storageService.loadNotesSortedByUpdatedAt();
+    final result = await widget.storageService.loadNotesSortedByUpdatedAt();
     if (result.success && result.data != null) {
       setState(() {
         _notes = result.data!;
@@ -55,8 +55,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   List<Note> get _filteredNotes {
     if (_searchQuery.isEmpty) return _notes;
-    final result = widget.storageService.searchNotes(_searchQuery);
-    return result.success ? result.data ?? [] : _notes;
+    return _notes.where((note) {
+      final lowerQuery = _searchQuery.toLowerCase();
+      return note.title.toLowerCase().contains(lowerQuery) ||
+          note.content.toLowerCase().contains(lowerQuery);
+    }).toList();
   }
 
   Future<void> _createNote(NoteType type) async {
@@ -771,16 +774,32 @@ class NoteSearchDelegate extends SearchDelegate<String> {
 
   @override
   Widget buildResults(BuildContext context) {
-    final result = storageService.searchNotes(query);
-    final notes = result.success ? (result.data ?? <Note>[]) : <Note>[];
-    return _buildResults(notes, context);
+    return FutureBuilder<StorageResult<List<Note>>>(
+      future: storageService.searchNotes(query),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final result = snapshot.data!;
+        final notes = result.success ? (result.data ?? <Note>[]) : <Note>[];
+        return _buildResults(notes, context);
+      },
+    );
   }
 
   @override
   Widget buildSuggestions(BuildContext context) {
-    final result = storageService.searchNotes(query);
-    final notes = result.success ? (result.data ?? <Note>[]) : <Note>[];
-    return _buildResults(notes, context);
+    return FutureBuilder<StorageResult<List<Note>>>(
+      future: storageService.searchNotes(query),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final result = snapshot.data!;
+        final notes = result.success ? (result.data ?? <Note>[]) : <Note>[];
+        return _buildResults(notes, context);
+      },
+    );
   }
 
   Widget _buildResults(List<Note> notes, BuildContext context) {

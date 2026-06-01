@@ -1,29 +1,13 @@
-import 'package:hive/hive.dart';
-
-part 'note.g.dart';
-
 /// 笔记类型枚举
 enum NoteType { richText, markdown }
 
 /// 笔记数据模型
-@HiveType(typeId: 0)
-class Note extends HiveObject {
-  @HiveField(0)
+class Note {
   String id;
-
-  @HiveField(1)
   String title;
-
-  @HiveField(2)
   String content;
-
-  @HiveField(3)
   String type; // 'rich_text' | 'markdown'
-
-  @HiveField(4)
   DateTime createdAt;
-
-  @HiveField(5)
   DateTime updatedAt;
 
   Note({
@@ -60,6 +44,30 @@ class Note extends HiveObject {
       'type': type,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
+    };
+  }
+
+  /// 从数据库 Map 创建
+  factory Note.fromMap(Map<String, dynamic> map) {
+    return Note(
+      id: map['id'] as String,
+      title: map['title'] as String,
+      content: map['content'] as String,
+      type: map['type'] as String,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(map['created_at'] as int),
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(map['updated_at'] as int),
+    );
+  }
+
+  /// 转换为数据库 Map
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'title': title,
+      'content': content,
+      'type': type,
+      'created_at': createdAt.millisecondsSinceEpoch,
+      'updated_at': updatedAt.millisecondsSinceEpoch,
     };
   }
 
