@@ -1,12 +1,9 @@
-/// 笔记类型枚举
-enum NoteType { richText, markdown }
-
 /// 笔记数据模型
 class Note {
   String id;
   String title;
   String content;
-  String type; // 'rich_text' | 'markdown'
+  String type; // 'rich_text'
   DateTime createdAt;
   DateTime updatedAt;
 
@@ -18,10 +15,6 @@ class Note {
     required this.createdAt,
     required this.updatedAt,
   });
-
-  /// 获取笔记类型枚举
-  NoteType get noteType =>
-      type == 'rich_text' ? NoteType.richText : NoteType.markdown;
 
   /// 从 JSON 创建
   factory Note.fromJson(Map<String, dynamic> json) {

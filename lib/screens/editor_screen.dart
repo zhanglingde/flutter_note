@@ -3,7 +3,6 @@ import '../models/note.dart';
 import '../services/note_storage_service.dart';
 import '../services/image_storage_service.dart';
 import '../widgets/rich_text_editor.dart';
-import '../widgets/markdown_editor.dart';
 
 /// 编辑器页面
 class EditorScreen extends StatefulWidget {
@@ -31,13 +30,9 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 
   void _onContentChanged(String content) {
-    // 提取标题（从内容的第一行）
-    final title = _extractTitle(content);
-
     setState(() {
       _currentNote = _currentNote.copyWith(
         content: content,
-        title: title,
         updatedAt: DateTime.now(),
       );
       _hasChanges = true;
@@ -45,30 +40,6 @@ class _EditorScreenState extends State<EditorScreen> {
 
     // 触发自动保存
     widget.storageService.scheduleAutoSave(_currentNote);
-  }
-
-  String _extractTitle(String content) {
-    if (content.isEmpty) return '';
-
-    if (_currentNote.type == 'markdown') {
-      // Markdown：提取第一个标题或非空行
-      final lines = content.split('\n');
-      for (final line in lines) {
-        final trimmed = line.trim();
-        if (trimmed.startsWith('#')) {
-          return trimmed.replaceFirst(RegExp(r'^#+\s*'), '').trim();
-        }
-        if (trimmed.isNotEmpty && !trimmed.startsWith('```')) {
-          return trimmed.length > 50
-              ? '${trimmed.substring(0, 50)}...'
-              : trimmed;
-        }
-      }
-      return '';
-    } else {
-      // 富文本：尝试从 Delta JSON 提取（简化处理）
-      return '富文本笔记';
-    }
   }
 
   void _handleMenuAction(String action) async {
@@ -142,9 +113,6 @@ class _EditorScreenState extends State<EditorScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isRichText = _currentNote.type == 'rich_text';
-    final isDesktop = MediaQuery.of(context).size.width > 768;
-
     return PopScope(
       canPop: true,
       onPopInvokedWithResult: (didPop, result) async {
@@ -232,17 +200,11 @@ class _EditorScreenState extends State<EditorScreen> {
             ),
           ],
         ),
-        body: isRichText
-            ? RichTextEditor(
-                initialContent: _currentNote.content,
-                onContentChanged: _onContentChanged,
-                noteId: _currentNote.id,
-              )
-            : MarkdownEditor(
-                initialContent: _currentNote.content,
-                onContentChanged: _onContentChanged,
-                isDesktop: isDesktop,
-              ),
+        body: RichTextEditor(
+          initialContent: _currentNote.content,
+          onContentChanged: _onContentChanged,
+          noteId: _currentNote.id,
+        ),
       ),
     );
   }

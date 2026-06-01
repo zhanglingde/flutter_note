@@ -4,7 +4,6 @@ import '../models/note.dart';
 import '../services/note_storage_service.dart';
 import '../services/image_storage_service.dart';
 import '../widgets/rich_text_editor.dart';
-import '../widgets/markdown_editor.dart';
 
 /// 首页 - 笔记列表
 class HomeScreen extends StatefulWidget {
@@ -62,13 +61,13 @@ class _HomeScreenState extends State<HomeScreen> {
     }).toList();
   }
 
-  Future<void> _createNote(NoteType type) async {
+  Future<void> _createNote() async {
     final now = DateTime.now();
     final note = Note(
       id: now.millisecondsSinceEpoch.toString(),
       title: '',
-      content: type == NoteType.richText ? '[]' : '',
-      type: type == NoteType.richText ? 'rich_text' : 'markdown',
+      content: '[]',
+      type: 'rich_text',
       createdAt: now,
       updatedAt: now,
     );
@@ -195,37 +194,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _showCreateDialog() {
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.text_fields),
-              title: const Text('富文本笔记'),
-              subtitle: const Text('支持格式化的笔记'),
-              onTap: () {
-                Navigator.pop(context);
-                _createNote(NoteType.richText);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.code),
-              title: const Text('Markdown 笔记'),
-              subtitle: const Text('使用 Markdown 语法'),
-              onTap: () {
-                Navigator.pop(context);
-                _createNote(NoteType.markdown);
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.of(context).size.width > 768;
@@ -257,7 +225,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _showCreateDialog,
+        onPressed: _createNote,
         child: const Icon(Icons.add),
       ),
     );
@@ -287,7 +255,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ? const Center(child: CircularProgressIndicator())
           : _buildNoteListView(),
       floatingActionButton: FloatingActionButton(
-        onPressed: _showCreateDialog,
+        onPressed: _createNote,
         child: const Icon(Icons.add),
       ),
     );
@@ -374,8 +342,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildNoteCard(Note note) {
-    final isRichText = note.type == 'rich_text';
-    final preview = _getPreview(note.content, isRichText);
+    final preview = _getPreview(note.content);
     final isSelected = _selectedNote?.id == note.id;
 
     return Dismissible(
@@ -395,7 +362,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: ListTile(
           selected: isSelected,
           leading: Icon(
-            isRichText ? Icons.text_fields : Icons.code,
+            Icons.text_fields,
             color: isSelected
                 ? Theme.of(context).colorScheme.primary
                 : Theme.of(context).colorScheme.onSurface,
@@ -437,7 +404,6 @@ class _HomeScreenState extends State<HomeScreen> {
   /// 右侧编辑器面板
   Widget _buildEditorPanel() {
     final note = _selectedNote!;
-    final isRichText = note.type == 'rich_text';
 
     return Column(
       children: [
@@ -493,17 +459,11 @@ class _HomeScreenState extends State<HomeScreen> {
         Expanded(
           child: KeyedSubtree(
             key: ValueKey(note.id),
-            child: isRichText
-                ? RichTextEditor(
-                    initialContent: note.content,
-                    onContentChanged: _onContentChanged,
-                    noteId: note.id,
-                  )
-                : MarkdownEditor(
-                    initialContent: note.content,
-                    onContentChanged: _onContentChanged,
-                    isDesktop: true,
-                  ),
+            child: RichTextEditor(
+              initialContent: note.content,
+              onContentChanged: _onContentChanged,
+              noteId: note.id,
+            ),
           ),
         ),
       ],
@@ -562,24 +522,21 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  String _getPreview(String content, bool isRichText) {
+  String _getPreview(String content) {
     if (content.isEmpty) return '空笔记';
-    if (isRichText) {
-      try {
-        final delta = jsonDecode(content) as List<dynamic>;
-        final buffer = StringBuffer();
-        for (final op in delta) {
-          if (op is Map<String, dynamic> && op['insert'] is String) {
-            buffer.write(op['insert']);
-          }
+    try {
+      final delta = jsonDecode(content) as List<dynamic>;
+      final buffer = StringBuffer();
+      for (final op in delta) {
+        if (op is Map<String, dynamic> && op['insert'] is String) {
+          buffer.write(op['insert']);
         }
-        final text = buffer.toString().replaceAll('\n', ' ').trim();
-        return text.isEmpty ? '富文本内容' : (text.length > 100 ? '${text.substring(0, 100)}...' : text);
-      } catch (e) {
-        return '富文本内容';
       }
+      final text = buffer.toString().replaceAll('\n', ' ').trim();
+      return text.isEmpty ? '富文本内容' : (text.length > 100 ? '${text.substring(0, 100)}...' : text);
+    } catch (e) {
+      return content.length > 100 ? '${content.substring(0, 100)}...' : content;
     }
-    return content.length > 100 ? '${content.substring(0, 100)}...' : content;
   }
 
   String _formatDate(DateTime date) {
@@ -652,8 +609,6 @@ class _EditorScreenWrapperState extends State<_EditorScreenWrapper> {
 
   @override
   Widget build(BuildContext context) {
-    final isRichText = _currentNote.type == 'rich_text';
-
     return PopScope(
       canPop: true,
       onPopInvokedWithResult: (didPop, result) async {
@@ -735,17 +690,11 @@ class _EditorScreenWrapperState extends State<_EditorScreenWrapper> {
             ),
           ],
         ),
-        body: isRichText
-            ? RichTextEditor(
-                initialContent: _currentNote.content,
-                onContentChanged: _onContentChanged,
-                noteId: _currentNote.id,
-              )
-            : MarkdownEditor(
-                initialContent: _currentNote.content,
-                onContentChanged: _onContentChanged,
-                isDesktop: false,
-              ),
+        body: RichTextEditor(
+          initialContent: _currentNote.content,
+          onContentChanged: _onContentChanged,
+          noteId: _currentNote.id,
+        ),
       ),
     );
   }
@@ -812,9 +761,7 @@ class NoteSearchDelegate extends SearchDelegate<String> {
       itemBuilder: (context, index) {
         final note = notes[index];
         return ListTile(
-          leading: Icon(
-            note.type == 'rich_text' ? Icons.text_fields : Icons.code,
-          ),
+          leading: const Icon(Icons.text_fields),
           title: Text(note.title.isEmpty ? '无标题' : note.title),
           subtitle: Text(
             note.content.isEmpty

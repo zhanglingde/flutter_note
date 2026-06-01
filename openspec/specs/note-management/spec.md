@@ -2,16 +2,14 @@
 
 ## ADDED Requirements
 
-### Requirement: 创建新笔记
-系统应当允许用户创建新笔记并选择编辑器类型。
+### Requirement: 创建笔记
+系统 SHALL 在用户点击新建按钮后直接创建富文本类型的笔记并打开编辑器。
 
-#### Scenario: 创建富文本笔记
-- **WHEN** 用户点击创建按钮并选择富文本
-- **THEN** 创建新的空白富文本笔记并打开编辑器
-
-#### Scenario: 创建 markdown 笔记
-- **WHEN** 用户点击创建按钮并选择 markdown
-- **THEN** 创建新的空白 markdown 笔记并打开编辑器
+#### Scenario: 点击新建按钮直接创建富文本笔记
+- **WHEN** 用户点击新建笔记按钮
+- **THEN** 系统直接创建一个新的富文本笔记（type = 'rich_text'，content = '[]'）
+- **AND** 打开编辑器进入编辑状态
+- **AND** 不显示笔记类型选择对话框
 
 #### Scenario: 自动生成笔记 ID
 - **WHEN** 新笔记被创建
@@ -22,7 +20,7 @@
 
 #### Scenario: 打开笔记进行编辑
 - **WHEN** 用户点击列表中的笔记
-- **THEN** 笔记在适当的编辑器（富文本或 markdown）中打开
+- **THEN** 笔记在富文本编辑器中打开
 
 #### Scenario: 保存编辑
 - **WHEN** 用户修改笔记内容
@@ -57,10 +55,6 @@
 #### Scenario: 按更新时间排序
 - **WHEN** 笔记列表显示
 - **THEN** 笔记按 updatedAt 降序排序
-
-#### Scenario: 显示笔记类型指示器
-- **WHEN** 笔记列表显示
-- **THEN** 每条笔记显示类型指示器（富文本或 markdown）
 
 ### Requirement: 笔记标题处理
 系统应当自动处理笔记标题。
