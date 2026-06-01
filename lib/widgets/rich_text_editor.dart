@@ -12,6 +12,7 @@ import 'package:dart_quill_delta/dart_quill_delta.dart';
 import 'dart:convert';
 import '../utils/markdown_auto_converter.dart';
 import '../services/image_storage_service.dart';
+import 'outline_sidebar.dart';
 
 /// 富文本编辑器组件
 class RichTextEditor extends StatefulWidget {
@@ -60,6 +61,12 @@ class _RichTextEditorState extends State<RichTextEditor> {
   /// 是否启用 Markdown 自动转换
   bool _markdownEnabled = true;
 
+  /// 是否显示大纲
+  bool _showOutline = false;
+
+  /// 大纲面板宽度
+  double _outlineWidth = 240;
+
   /// 切换 Markdown 自动转换
   void toggleMarkdown() {
     setState(() {
@@ -85,7 +92,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
         );
         _controller = QuillController(
           document: document,
-          selection: TextSelection.collapsed(offset: document.length - 1),
+          selection: const TextSelection.collapsed(offset: 0),
           config: QuillControllerConfig(
             clipboardConfig: QuillClipboardConfig(
               onClipboardPaste: _onClipboardPaste,
@@ -499,6 +506,20 @@ class _RichTextEditorState extends State<RichTextEditor> {
               ),
             ),
           ),
+          // 右侧：大纲按钮
+          Tooltip(
+            message: _showOutline ? '关闭大纲' : '打开大纲',
+            child: IconButton(
+              icon: Icon(
+                Icons.menu_book_outlined,
+                size: 20,
+                color: _showOutline
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).colorScheme.outline,
+              ),
+              onPressed: () => setState(() => _showOutline = !_showOutline),
+            ),
+          ),
           // 右侧：Markdown 开关
           Tooltip(
             message: _markdownEnabled
@@ -900,78 +921,116 @@ class _RichTextEditorState extends State<RichTextEditor> {
 
   @override
   Widget build(BuildContext context) {
+    final editorWidget = Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (event) {
+        _isDragging = true;
+        _headerPointerDown = event.position;
+      },
+      onPointerUp: (event) {
+        _isDragging = false;
+        _autoScrollVelocity = 0;
+        _autoScrollTimer?.cancel();
+        _autoScrollTimer = null;
+        // 检测代码块 header 区域的点击
+        if (_headerPointerDown != null &&
+            (event.position - _headerPointerDown!).distance < 20) {
+          _handleHeaderTap(event.position);
+        }
+        _headerPointerDown = null;
+      },
+      onPointerCancel: (_) {
+        _isDragging = false;
+        _autoScrollVelocity = 0;
+        _autoScrollTimer?.cancel();
+        _autoScrollTimer = null;
+      },
+      onPointerMove: (event) {
+        if (!_isDragging) return;
+        _handleAutoScroll(event.localPosition, event.kind);
+      },
+      onPointerSignal: _handlePointerSignal,
+      child: LayoutBuilder(builder: (context, boxConstraints) {
+        _editorContentWidth = boxConstraints.maxWidth - _editorHorizontalPadding * 2;
+        final defaultStyles = DefaultStyles.getInstance(context);
+        return QuillStyles(
+            data: defaultStyles.merge(DefaultStyles(
+              code: DefaultTextBlockStyle(
+                defaultStyles.code!.style,
+                defaultStyles.code!.horizontalSpacing,
+                defaultStyles.code!.verticalSpacing,
+                defaultStyles.code!.lineSpacing,
+                const BoxDecoration(
+                  color: Color(0xFFEDEDED),
+                  borderRadius: BorderRadius.all(Radius.circular(2)),
+                ),
+              ),
+            )),
+            child: QuillEditor(
+              controller: _controller,
+              focusNode: _focusNode,
+              scrollController: _scrollController,
+              config: QuillEditorConfig(
+                padding: const EdgeInsets.only(left: _editorHorizontalPadding, top: 16, right: _editorHorizontalPadding, bottom: 16),
+                placeholder: '开始输入...',
+                autoFocus: false,
+                textSpanBuilder: _codeHighlightSpanBuilder,
+                customLeadingBlockBuilder: _buildLeadingBlock,
+                embedBuilders: [
+                  _ImageEmbedBuilder(controller: _controller),
+                ],
+              ),
+            ),
+          );
+      }),
+    );
+
     return Column(
       children: [
         _buildToolbar(),
         Expanded(
-          child: Listener(
-            behavior: HitTestBehavior.translucent,
-            onPointerDown: (event) {
-              _isDragging = true;
-              _headerPointerDown = event.position;
-            },
-            onPointerUp: (event) {
-              _isDragging = false;
-              _autoScrollVelocity = 0;
-              _autoScrollTimer?.cancel();
-              _autoScrollTimer = null;
-              // 检测代码块 header 区域的点击
-              if (_headerPointerDown != null &&
-                  (event.position - _headerPointerDown!).distance < 20) {
-                _handleHeaderTap(event.position);
-              }
-              _headerPointerDown = null;
-            },
-            onPointerCancel: (_) {
-              _isDragging = false;
-              _autoScrollVelocity = 0;
-              _autoScrollTimer?.cancel();
-              _autoScrollTimer = null;
-            },
-            onPointerMove: (event) {
-              if (!_isDragging) return;
-              _handleAutoScroll(event.localPosition, event.kind);
-            },
-            onPointerSignal: _handlePointerSignal,
-            child: Container(
-              color: Colors.white,
-              child: LayoutBuilder(builder: (context, boxConstraints) {
-              _editorContentWidth = boxConstraints.maxWidth - _editorHorizontalPadding * 2;
-              final defaultStyles = DefaultStyles.getInstance(context);
-              return QuillStyles(
-                  data: defaultStyles.merge(DefaultStyles(
-                    code: DefaultTextBlockStyle(
-                      defaultStyles.code!.style,
-                      defaultStyles.code!.horizontalSpacing,
-                      defaultStyles.code!.verticalSpacing,
-                      defaultStyles.code!.lineSpacing,
-                      const BoxDecoration(
-                        color: Color(0xFFEDEDED),
-                        borderRadius: BorderRadius.all(Radius.circular(2)),
+          child: _showOutline
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: editorWidget),
+                    _buildDragHandle(),
+                    SizedBox(
+                      width: _outlineWidth.clamp(160.0, 400.0),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          border: Border(
+                            left: BorderSide(color: Theme.of(context).dividerColor),
+                          ),
+                        ),
+                        child: OutlineSidebar(
+                          controller: _controller,
+                          editorScrollController: _scrollController,
+                        ),
                       ),
                     ),
-                  )),
-                  child: QuillEditor(
-                    controller: _controller,
-                    focusNode: _focusNode,
-                    scrollController: _scrollController,
-                    config: QuillEditorConfig(
-                      padding: const EdgeInsets.only(left: _editorHorizontalPadding, top: 16, right: _editorHorizontalPadding, bottom: 16),
-                      placeholder: '开始输入...',
-                      autoFocus: false,
-                      textSpanBuilder: _codeHighlightSpanBuilder,
-                      customLeadingBlockBuilder: _buildLeadingBlock,
-                      embedBuilders: [
-                        _ImageEmbedBuilder(controller: _controller),
-                      ],
-                    ),
-                  ),
-                );
-              }),
-            ),
-          ),
+                  ],
+                )
+              : editorWidget,
         ),
       ],
+    );
+  }
+
+  Widget _buildDragHandle() {
+    return GestureDetector(
+      onHorizontalDragUpdate: (details) {
+        setState(() {
+          _outlineWidth = (_outlineWidth - details.delta.dx).clamp(160.0, 400.0);
+        });
+      },
+      child: MouseRegion(
+        cursor: SystemMouseCursors.resizeColumn,
+        child: Container(
+          width: 4,
+          color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
+        ),
+      ),
     );
   }
 

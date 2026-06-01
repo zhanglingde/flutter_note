@@ -1,0 +1,95 @@
+<h2>大纲功能：两种实现方案</h2>
+<p class="subtitle">选择最适合的实现方式</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">方案 A：内置 Widget（推荐）</div>
+    <div class="mockup-body" style="display:flex; height:320px;">
+      <div style="flex:1; background:#f8f9fa; padding:12px; border-right:1px solid #e0e0e0;">
+        <div style="font-size:11px; color:#888; margin-bottom:8px;">工具栏</div>
+        <div style="background:#fff; border:1px solid #e0e0e0; border-radius:4px; padding:8px; font-size:12px; line-height:1.8;">
+          <div style="color:#5c6bc0; font-weight:bold;">标题 1</div>
+          <div style="padding-left:16px; color:#7986cb;">标题 2</div>
+          <div style="padding-left:32px; color:#9fa8da;">标题 3</div>
+          <div style="color:#5c6bc0; font-weight:bold;">标题 1</div>
+          <div style="padding-left:16px; color:#7986cb;">标题 2</div>
+        </div>
+        <div style="margin-top:8px; font-size:11px; color:#888;">编辑区域</div>
+      </div>
+      <div style="width:200px; background:#fff; padding:12px; border-left:2px solid #5c6bc0;">
+        <div style="font-size:13px; font-weight:bold; margin-bottom:12px; color:#333;">大纲</div>
+        <div style="font-size:12px; padding:6px 8px; border-radius:4px; background:#e8eaf6; color:#5c6bc0; font-weight:500;">标题 1: 项目介绍</div>
+        <div style="font-size:12px; padding:6px 8px 6px 20px; color:#7986cb;">标题 2: 背景</div>
+        <div style="font-size:12px; padding:6px 8px 6px 32px; color:#9fa8da;">标题 3: 历史</div>
+        <div style="font-size:12px; padding:6px 8px 6px 20px; color:#7986cb;">标题 2: 目标</div>
+        <div style="font-size:12px; padding:6px 8px; border-radius:4px; color:#5c6bc0; font-weight:500;">标题 1: 技术方案</div>
+        <div style="font-size:12px; padding:6px 8px 6px 20px; color:#7986cb;">标题 2: 架构</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">方案 B：独立路由页面</div>
+    <div class="mockup-body" style="display:flex; height:320px; flex-direction:column;">
+      <div style="background:#f8f9fa; padding:12px; flex:1;">
+        <div style="font-size:11px; color:#888; margin-bottom:8px;">全屏编辑页面</div>
+        <div style="background:#fff; border:1px solid #e0e0e0; border-radius:4px; padding:8px; font-size:12px; line-height:1.8;">
+          <div style="color:#66bb6a; font-weight:bold;">标题 1</div>
+          <div style="padding-left:16px; color:#81c784;">标题 2</div>
+          <div style="padding-left:32px; color:#a5d6a7;">标题 3</div>
+        </div>
+      </div>
+      <div style="background:#fff3e0; padding:8px; border-top:2px solid #ff9800; text-align:center;">
+        <span style="font-size:11px; color:#e65100;">点击大纲按钮 → 跳转到独立的大纲列表页面</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:24px;">
+  <h3>方案对比</h3>
+  <table style="width:100%; border-collapse:collapse; font-size:13px;">
+    <tr style="border-bottom:1px solid #eee;">
+      <th style="text-align:left; padding:8px;"></th>
+      <th style="text-align:left; padding:8px; color:#5c6bc0;">方案 A 内置侧边栏</th>
+      <th style="text-align:left; padding:8px; color:#66bb6a;">方案 B 独立页面</th>
+    </tr>
+    <tr style="border-bottom:1px solid #eee;">
+      <td style="padding:8px; font-weight:bold;">实时联动</td>
+      <td style="padding:8px;">✅ 光标移动实时高亮</td>
+      <td style="padding:8px;">❌ 需要手动刷新</td>
+    </tr>
+    <tr style="border-bottom:1px solid #eee;">
+      <td style="padding:8px; font-weight:bold;">编辑体验</td>
+      <td style="padding:8px;">✅ 边编辑边看大纲</td>
+      <td style="padding:8px;">❌ 离开编辑页面</td>
+    </tr>
+    <tr style="border-bottom:1px solid #eee;">
+      <td style="padding:8px; font-weight:bold;">实现复杂度</td>
+      <td style="padding:8px;">中等 — 需要监听文档变化</td>
+      <td style="padding:8px;">低 — 独立页面简单</td>
+    </tr>
+    <tr>
+      <td style="padding:8px; font-weight:bold;">空间占用</td>
+      <td style="padding:8px;">侧边栏占编辑区宽度</td>
+      <td style="padding:8px;">全屏切换，不占空间</td>
+    </tr>
+  </table>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>内置侧边栏</h3>
+      <p>在编辑器内部添加可拖拽的侧边栏，实时联动光标位置</p>
+    </div>
+  </div>
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>独立页面</h3>
+      <p>点击大纲按钮跳转到独立的大纲列表页面</p>
+    </div>
+  </div>
+</div>

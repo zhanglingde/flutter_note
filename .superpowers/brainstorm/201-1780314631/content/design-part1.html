@@ -1,0 +1,60 @@
+<h2>设计：大纲侧边栏</h2>
+<p class="subtitle">Part 1 — 整体架构与交互</p>
+
+<div class="mockup">
+  <div class="mockup-header">整体布局结构</div>
+  <div class="mockup-body" style="display:flex; height:380px; font-size:12px;">
+    <!-- 编辑器区域 -->
+    <div style="flex:1; display:flex; flex-direction:column; background:#f8f9fa;">
+      <!-- 顶部工具栏 -->
+      <div style="height:48px; background:#fff; border-bottom:1px solid #e0e0e0; display:flex; align-items:center; padding:0 12px; gap:8px;">
+        <span style="background:#f0f0f0; padding:4px 8px; border-radius:4px; font-size:11px;">段落</span>
+        <span style="background:#f0f0f0; padding:4px 8px; border-radius:4px; font-size:11px;">格式</span>
+        <span style="background:#f0f0f0; padding:4px 8px; border-radius:4px; font-size:11px;">🖼</span>
+        <span style="background:#f0f0f0; padding:4px 8px; border-radius:4px; font-size:11px;">📷</span>
+        <span style="flex:1;"></span>
+        <span style="background:#f0f0f0; padding:4px 8px; border-radius:4px; font-size:11px;">&lt;/&gt;</span>
+        <span style="background:#e8eaf6; padding:4px 8px; border-radius:4px; font-size:11px; font-weight:bold; color:#5c6bc0;">☰ 大纲</span>
+      </div>
+      <!-- 编辑区域 -->
+      <div style="flex:1; padding:16px; overflow:auto;">
+        <div style="font-size:16px; font-weight:bold; color:#333; margin-bottom:8px;">项目介绍</div>
+        <div style="font-size:13px; color:#666; margin-bottom:12px;">这是一段正文内容...</div>
+        <div style="font-size:14px; font-weight:bold; color:#444; margin-bottom:6px;">背景</div>
+        <div style="font-size:13px; color:#666; margin-bottom:12px;">背景描述...</div>
+        <div style="font-size:13px; font-weight:bold; color:#555; margin-bottom:6px;">历史沿革</div>
+        <div style="font-size:13px; color:#666; margin-bottom:12px;">历史描述...</div>
+      </div>
+    </div>
+    <!-- 拖拽条 -->
+    <div style="width:4px; background:#5c6bc0; cursor:col-resize;"></div>
+    <!-- 大纲面板 -->
+    <div style="width:220px; background:#fff; border-left:1px solid #e0e0e0; display:flex; flex-direction:column;">
+      <div style="padding:12px 16px; font-weight:bold; font-size:14px; border-bottom:1px solid #f0f0f0; color:#333;">大纲</div>
+      <div style="flex:1; padding:8px; overflow-y:auto;">
+        <div style="padding:6px 10px; border-radius:6px; background:#e8eaf6; color:#5c6bc0; font-size:12px; font-weight:500; cursor:pointer;">项目介绍</div>
+        <div style="padding:6px 10px 6px 22px; color:#7986cb; font-size:12px; cursor:pointer; border-radius:4px;">背景</div>
+        <div style="padding:6px 10px 6px 34px; color:#9fa8da; font-size:12px; cursor:pointer; border-radius:4px;">历史沿革</div>
+        <div style="padding:6px 10px 6px 22px; color:#7986cb; font-size:12px; cursor:pointer; border-radius:4px;">目标</div>
+        <div style="padding:6px 10px; color:#5c6bc0; font-size:12px; font-weight:500; cursor:pointer; border-radius:4px;">技术方案</div>
+        <div style="padding:6px 10px 6px 22px; color:#7986cb; font-size:12px; cursor:pointer; border-radius:4px;">架构设计</div>
+        <div style="padding:6px 10px 6px 22px; color:#7986cb; font-size:12px; cursor:pointer; border-radius:4px;">性能优化</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:24px;">
+  <h3>交互行为</h3>
+  <div style="font-size:13px; line-height:2;">
+    <p><strong>切换：</strong>点击工具栏「☰ 大纲」按钮 → 大纲面板在右侧展开/收起，编辑区域自动缩窄/恢复</p>
+    <p><strong>跳转：</strong>点击大纲中的标题 → 编辑器滚动到对应位置</p>
+    <p><strong>高亮：</strong>编辑器光标移动时 → 大纲中自动高亮当前所在标题</p>
+    <p><strong>拖拽：</strong>拖拽面板左边缘的分隔条 → 调整面板宽度（最小 160px，最大 400px）</p>
+    <p><strong>实时更新：</strong>编辑标题文字或新增/删除标题 → 大纲自动刷新</p>
+  </div>
+</div>
+
+<div style="text-align:center; padding:16px; color:#888; font-size:13px;">
+  这是 Part 1（架构与交互）。确认后我会展示 Part 2（组件设计与数据流）。
+</div>
