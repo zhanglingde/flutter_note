@@ -21,12 +21,14 @@ class RichTextEditor extends StatefulWidget {
   final String initialContent;
   final Function(String) onContentChanged;
   final String noteId;
+  final List<Widget> actions;
 
   const RichTextEditor({
     super.key,
     required this.initialContent,
     required this.onContentChanged,
     required this.noteId,
+    this.actions = const [],
   });
 
   @override
@@ -518,6 +520,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
               tooltip: '中英文格式化',
             ),
           ),
+          ...widget.actions,
         ],
       ),
     );

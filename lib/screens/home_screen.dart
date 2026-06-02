@@ -20,7 +20,6 @@ class _HomeScreenState extends State<HomeScreen> {
   String _searchQuery = '';
   bool _isLoading = true;
   Note? _selectedNote;
-  final TextEditingController _titleController = TextEditingController();
 
   @override
   void initState() {
@@ -30,7 +29,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
-    _titleController.dispose();
     super.dispose();
   }
 
@@ -118,27 +116,16 @@ class _HomeScreenState extends State<HomeScreen> {
   void _selectNote(Note note) {
     setState(() {
       _selectedNote = note;
-      _titleController.text = note.title;
     });
   }
 
   void _onContentChanged(String content) {
     if (_selectedNote == null) return;
+    final title = _extractTitle(content);
     setState(() {
       _selectedNote = _selectedNote!.copyWith(
         content: content,
-        updatedAt: DateTime.now(),
-      );
-    });
-    _updateNoteInList(_selectedNote!);
-    widget.storageService.scheduleAutoSave(_selectedNote!);
-  }
-
-  void _onTitleChanged(String value) {
-    if (_selectedNote == null) return;
-    setState(() {
-      _selectedNote = _selectedNote!.copyWith(
-        title: value,
+        title: title,
         updatedAt: DateTime.now(),
       );
     });
@@ -342,6 +329,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildNoteCard(Note note) {
+    final title = _extractTitle(note.content);
     final preview = _getPreview(note.content);
     final isSelected = _selectedNote?.id == note.id;
 
@@ -361,16 +349,11 @@ class _HomeScreenState extends State<HomeScreen> {
             : null,
         child: ListTile(
           selected: isSelected,
-          leading: Icon(
-            Icons.text_fields,
-            color: isSelected
-                ? Theme.of(context).colorScheme.primary
-                : Theme.of(context).colorScheme.onSurface,
-          ),
           title: Text(
-            note.title.isEmpty ? '无标题' : note.title,
+            title.isEmpty ? '无标题' : title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
           ),
           subtitle: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -407,54 +390,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Column(
       children: [
-        // 编辑器顶栏：标题 + 操作按钮
-        Container(
-          height: 56,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface,
-            border: Border(
-              bottom: BorderSide(color: const Color(0xFFF8F8F8)),
-            ),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _titleController,
-                  decoration: const InputDecoration(
-                    hintText: '输入标题...',
-                    border: InputBorder.none,
-                    isDense: true,
-                  ),
-                  style: Theme.of(context).textTheme.titleMedium,
-                  onChanged: _onTitleChanged,
-                ),
-              ),
-              PopupMenuButton<String>(
-                onSelected: (action) => _handleEditorAction(action),
-                itemBuilder: (context) => [
-                  const PopupMenuItem(
-                    value: 'duplicate',
-                    child: ListTile(
-                      leading: Icon(Icons.copy),
-                      title: Text('复制笔记'),
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                  ),
-                  const PopupMenuItem(
-                    value: 'delete',
-                    child: ListTile(
-                      leading: Icon(Icons.delete, color: Colors.red),
-                      title: Text('删除', style: TextStyle(color: Colors.red)),
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
         // 编辑器内容
         Expanded(
           child: KeyedSubtree(
@@ -463,6 +398,29 @@ class _HomeScreenState extends State<HomeScreen> {
               initialContent: note.content,
               onContentChanged: _onContentChanged,
               noteId: note.id,
+              actions: [
+                PopupMenuButton<String>(
+                  onSelected: (action) => _handleEditorAction(action),
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(
+                      value: 'duplicate',
+                      child: ListTile(
+                        leading: Icon(Icons.copy),
+                        title: Text('复制笔记'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                    const PopupMenuItem(
+                      value: 'delete',
+                      child: ListTile(
+                        leading: Icon(Icons.delete, color: Colors.red),
+                        title: Text('删除', style: TextStyle(color: Colors.red)),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
         ),
@@ -555,6 +513,25 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
+/// 从富文本内容中提取第一行作为标题
+String _extractTitle(String content) {
+  if (content.isEmpty) return '';
+  try {
+    final delta = jsonDecode(content) as List<dynamic>;
+    final buffer = StringBuffer();
+    for (final op in delta) {
+      if (op is Map<String, dynamic> && op['insert'] is String) {
+        buffer.write(op['insert']);
+      }
+    }
+    final fullText = buffer.toString();
+    final firstLine = fullText.split('\n').first.trim();
+    return firstLine.length > 50 ? '${firstLine.substring(0, 50)}...' : firstLine;
+  } catch (e) {
+    return '';
+  }
+}
+
 /// 移动端编辑器页面（从 HomeScreen 导航进入）
 class _EditorScreenWrapper extends StatefulWidget {
   final Note note;
@@ -572,25 +549,24 @@ class _EditorScreenWrapper extends StatefulWidget {
 class _EditorScreenWrapperState extends State<_EditorScreenWrapper> {
   late Note _currentNote;
   bool _hasChanges = false;
-  final TextEditingController _titleController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _currentNote = widget.note;
-    _titleController.text = _currentNote.title;
   }
 
   @override
   void dispose() {
-    _titleController.dispose();
     super.dispose();
   }
 
   void _onContentChanged(String content) {
+    final title = _extractTitle(content);
     setState(() {
       _currentNote = _currentNote.copyWith(
         content: content,
+        title: title,
         updatedAt: DateTime.now(),
       );
       _hasChanges = true;
@@ -622,25 +598,10 @@ class _EditorScreenWrapperState extends State<_EditorScreenWrapper> {
             icon: const Icon(Icons.arrow_back),
             onPressed: _flushAndPop,
           ),
-          title: TextField(
-            controller: _titleController,
-            decoration: const InputDecoration(
-              hintText: '输入标题...',
-              border: InputBorder.none,
-              isDense: true,
-              contentPadding: EdgeInsets.zero,
-            ),
-            style: Theme.of(context).textTheme.titleMedium,
-            onChanged: (value) {
-              setState(() {
-                _currentNote = _currentNote.copyWith(
-                  title: value,
-                  updatedAt: DateTime.now(),
-                );
-                _hasChanges = true;
-              });
-              widget.storageService.scheduleAutoSave(_currentNote);
-            },
+          title: Text(
+            _currentNote.title.isEmpty ? '无标题' : _currentNote.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
           actions: [
             PopupMenuButton<String>(
