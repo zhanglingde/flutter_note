@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import '../models/note.dart';
+import '../models/tab_state.dart';
 import '../services/note_storage_service.dart';
 import '../services/image_storage_service.dart';
 import '../widgets/rich_text_editor.dart';
@@ -19,7 +21,12 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Note> _notes = [];
   String _searchQuery = '';
   bool _isLoading = true;
-  Note? _selectedNote;
+
+  /// 标签页管理
+  final List<TabState> _tabs = [];
+  String? _activeTabId;
+
+  static const int _maxTabs = 20;
 
   @override
   void initState() {
@@ -59,6 +66,94 @@ class _HomeScreenState extends State<HomeScreen> {
     }).toList();
   }
 
+  // ==================== 标签页管理 ====================
+
+  /// 打开笔记（如果已打开则切换，否则新建标签页）
+  void _openTab(Note note) {
+    final existingIndex = _tabs.indexWhere((t) => t.id == note.id);
+    if (existingIndex >= 0) {
+      // 已打开 -> 切换并更新访问时间
+      setState(() {
+        _activeTabId = note.id;
+        _tabs[existingIndex] = _tabs[existingIndex]
+            .copyWith(lastAccessedAt: DateTime.now());
+      });
+    } else {
+      // 未打开 -> 新建标签页
+      if (_tabs.length >= _maxTabs) {
+        _evictOldestTab();
+      }
+      setState(() {
+        _tabs.add(TabState(note: note, key: GlobalKey()));
+        _activeTabId = note.id;
+      });
+    }
+  }
+
+  /// 关闭标签页
+  void _closeTab(String tabId) async {
+    final index = _tabs.indexWhere((t) => t.id == tabId);
+    if (index < 0) return;
+
+    // 先保存
+    final tab = _tabs[index];
+    widget.storageService.scheduleAutoSave(tab.note);
+    await widget.storageService.flushAutoSave();
+
+    setState(() {
+      _tabs.removeAt(index);
+      if (_activeTabId == tabId) {
+        // 切换到相邻标签页
+        if (_tabs.isEmpty) {
+          _activeTabId = null;
+        } else if (index < _tabs.length) {
+          _activeTabId = _tabs[index].id;
+        } else {
+          _activeTabId = _tabs.last.id;
+        }
+      }
+    });
+  }
+
+  /// LRU 淘汰最旧的标签页
+  void _evictOldestTab() {
+    if (_tabs.isEmpty) return;
+    TabState oldest = _tabs.first;
+    for (final tab in _tabs) {
+      if (tab.lastAccessedAt.isBefore(oldest.lastAccessedAt)) {
+        oldest = tab;
+      }
+    }
+    _closeTab(oldest.id);
+  }
+
+  void _onTabContentChanged(String tabId, String content) {
+    final index = _tabs.indexWhere((t) => t.id == tabId);
+    if (index < 0) return;
+
+    final title = _extractTitle(content);
+    final updatedNote = _tabs[index].note.copyWith(
+      content: content,
+      title: title,
+      updatedAt: DateTime.now(),
+    );
+    setState(() {
+      _tabs[index] = _tabs[index].copyWith(note: updatedNote);
+    });
+    _updateNoteInList(updatedNote);
+    widget.storageService.scheduleAutoSave(updatedNote);
+  }
+
+  void _reorderTabs(int oldIndex, int newIndex) {
+    setState(() {
+      if (newIndex > oldIndex) newIndex -= 1;
+      final tab = _tabs.removeAt(oldIndex);
+      _tabs.insert(newIndex, tab);
+    });
+  }
+
+  // ==================== 笔记操作 ====================
+
   Future<void> _createNote() async {
     final now = DateTime.now();
     final note = Note(
@@ -75,7 +170,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final isDesktop = MediaQuery.of(context).size.width > 768;
       if (isDesktop) {
         _loadNotes();
-        _selectNote(note);
+        _openTab(note);
       } else {
         await Navigator.push(
           context,
@@ -98,7 +193,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _openNote(Note note) async {
     final isDesktop = MediaQuery.of(context).size.width > 768;
     if (isDesktop) {
-      _selectNote(note);
+      _openTab(note);
     } else {
       await Navigator.push(
         context,
@@ -111,26 +206,6 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       _loadNotes();
     }
-  }
-
-  void _selectNote(Note note) {
-    setState(() {
-      _selectedNote = note;
-    });
-  }
-
-  void _onContentChanged(String content) {
-    if (_selectedNote == null) return;
-    final title = _extractTitle(content);
-    setState(() {
-      _selectedNote = _selectedNote!.copyWith(
-        content: content,
-        title: title,
-        updatedAt: DateTime.now(),
-      );
-    });
-    _updateNoteInList(_selectedNote!);
-    widget.storageService.scheduleAutoSave(_selectedNote!);
   }
 
   void _updateNoteInList(Note updated) {
@@ -169,8 +244,9 @@ class _HomeScreenState extends State<HomeScreen> {
       final result = await widget.storageService.deleteNote(note.id);
       if (result.success) {
         await ImageStorageService().deleteImagesForNote(note.id);
-        if (_selectedNote?.id == note.id) {
-          setState(() => _selectedNote = null);
+        // 关闭对应标签页
+        if (_tabs.any((t) => t.id == note.id)) {
+          _closeTab(note.id);
         }
         _loadNotes();
       } else if (mounted) {
@@ -180,6 +256,8 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
   }
+
+  // ==================== 构建 UI ====================
 
   @override
   Widget build(BuildContext context) {
@@ -191,7 +269,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return _buildMobileLayout();
   }
 
-  /// 桌面端：左右两栏布局
+  /// 桌面端：左右两栏布局 + 标签页
   Widget _buildDesktopLayout() {
     return Scaffold(
       body: Row(
@@ -203,11 +281,11 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           // 分割线
           const VerticalDivider(width: 1),
-          // 右侧：编辑器面板
+          // 右侧：标签栏 + 编辑器面板
           Expanded(
-            child: _selectedNote != null
-                ? _buildEditorPanel()
-                : _buildEmptyEditorPanel(),
+            child: _tabs.isEmpty
+                ? _buildEmptyEditorPanel()
+                : _buildEditorPanelWithTabs(),
           ),
         ],
       ),
@@ -215,6 +293,181 @@ class _HomeScreenState extends State<HomeScreen> {
         onPressed: _createNote,
         child: const Icon(Icons.add),
       ),
+    );
+  }
+
+  /// 标签栏 + 编辑器面板
+  Widget _buildEditorPanelWithTabs() {
+    return Column(
+      children: [
+        // 标签栏
+        _buildTabBar(),
+        // 编辑器（Offstage 包裹所有标签页的编辑器）
+        Expanded(
+          child: Stack(
+            children: _tabs.map((tab) {
+              final isActive = tab.id == _activeTabId;
+              return Offstage(
+                offstage: !isActive,
+                child: KeyedSubtree(
+                  key: tab.key,
+                  child: RichTextEditor(
+                    initialContent: tab.note.content,
+                    onContentChanged: (content) =>
+                        _onTabContentChanged(tab.id, content),
+                    noteId: tab.note.id,
+                    actions: [
+                      PopupMenuButton<String>(
+                        onSelected: (action) =>
+                            _handleEditorAction(action, tab.note),
+                        itemBuilder: (context) => [
+                          const PopupMenuItem(
+                            value: 'duplicate',
+                            child: ListTile(
+                              leading: Icon(Icons.copy),
+                              title: Text('复制笔记'),
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                          ),
+                          const PopupMenuItem(
+                            value: 'delete',
+                            child: ListTile(
+                              leading: Icon(Icons.delete, color: Colors.red),
+                              title: Text('删除',
+                                  style: TextStyle(color: Colors.red)),
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 标签栏
+  Widget _buildTabBar() {
+    return Container(
+      height: 40,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        border: Border(
+          bottom: BorderSide(
+            color: Theme.of(context).dividerColor,
+            width: 1,
+          ),
+        ),
+      ),
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        itemCount: _tabs.length,
+        itemBuilder: (context, index) {
+          final tab = _tabs[index];
+          final isActive = tab.id == _activeTabId;
+          return _buildTabItem(tab, isActive, index);
+        },
+      ),
+    );
+  }
+
+  Widget _buildTabItem(TabState tab, bool isActive, int index) {
+    final title = _extractTitle(tab.note.content);
+    final displayTitle = title.isEmpty ? '无标题' : title;
+
+    return DragTarget<int>(
+      onAcceptWithDetails: (details) {
+        _reorderTabs(details.data, index);
+      },
+      builder: (context, candidateData, rejectedData) {
+        return LongPressDraggable<int>(
+          data: index,
+          feedback: Material(
+            elevation: 4,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              color: Theme.of(context).colorScheme.surfaceContainerHigh,
+              child: Text(
+                displayTitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+          ),
+          child: MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: Listener(
+              onPointerDown: (event) {
+                // 中键点击关闭标签页
+                if (event.kind == PointerDeviceKind.mouse &&
+                    event.buttons & kMiddleMouseButton != 0) {
+                  _closeTab(tab.id);
+                }
+              },
+              child: InkWell(
+                onTap: () {
+                  setState(() {
+                    _activeTabId = tab.id;
+                    final i = _tabs.indexWhere((t) => t.id == tab.id);
+                    if (i >= 0) {
+                      _tabs[i] =
+                          _tabs[i].copyWith(lastAccessedAt: DateTime.now());
+                    }
+                  });
+                },
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  padding: const EdgeInsets.only(left: 12, right: 4),
+                  constraints:
+                      const BoxConstraints(minWidth: 100, maxWidth: 180),
+                  decoration: BoxDecoration(
+                    color: isActive
+                        ? Theme.of(context).colorScheme.surface
+                        : Colors.transparent,
+                    border: Border(
+                      right: BorderSide(
+                        color: Theme.of(context).dividerColor,
+                        width: 0.5,
+                      ),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          displayTitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight:
+                                isActive ? FontWeight.w600 : FontWeight.normal,
+                          ),
+                        ),
+                      ),
+                      SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: IconButton(
+                          icon: const Icon(Icons.close, size: 14),
+                          padding: EdgeInsets.zero,
+                          onPressed: () => _closeTab(tab.id),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -299,15 +552,15 @@ class _HomeScreenState extends State<HomeScreen> {
             Text(
               '还没有笔记',
               style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                color: Theme.of(context).colorScheme.outline,
-              ),
+                    color: Theme.of(context).colorScheme.outline,
+                  ),
             ),
             const SizedBox(height: 8),
             Text(
               '点击 + 按钮创建第一个笔记',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.outline,
-              ),
+                    color: Theme.of(context).colorScheme.outline,
+                  ),
             ),
           ],
         ),
@@ -331,7 +584,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildNoteCard(Note note) {
     final title = _extractTitle(note.content);
     final preview = _getPreview(note.content);
-    final isSelected = _selectedNote?.id == note.id;
+    final isSelected = _tabs.any((t) => t.id == note.id && t.id == _activeTabId);
 
     return Dismissible(
       key: Key(note.id),
@@ -345,7 +598,10 @@ class _HomeScreenState extends State<HomeScreen> {
       onDismissed: (_) => _deleteNote(note),
       child: Container(
         color: isSelected
-            ? Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3)
+            ? Theme.of(context)
+                .colorScheme
+                .primaryContainer
+                .withValues(alpha: 0.3)
             : null,
         child: ListTile(
           selected: isSelected,
@@ -369,8 +625,8 @@ class _HomeScreenState extends State<HomeScreen> {
               Text(
                 _formatDate(note.updatedAt),
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.outline,
-                ),
+                      color: Theme.of(context).colorScheme.outline,
+                    ),
               ),
             ],
           ),
@@ -381,50 +637,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
-    );
-  }
-
-  /// 右侧编辑器面板
-  Widget _buildEditorPanel() {
-    final note = _selectedNote!;
-
-    return Column(
-      children: [
-        // 编辑器内容
-        Expanded(
-          child: KeyedSubtree(
-            key: ValueKey(note.id),
-            child: RichTextEditor(
-              initialContent: note.content,
-              onContentChanged: _onContentChanged,
-              noteId: note.id,
-              actions: [
-                PopupMenuButton<String>(
-                  onSelected: (action) => _handleEditorAction(action),
-                  itemBuilder: (context) => [
-                    const PopupMenuItem(
-                      value: 'duplicate',
-                      child: ListTile(
-                        leading: Icon(Icons.copy),
-                        title: Text('复制笔记'),
-                        contentPadding: EdgeInsets.zero,
-                      ),
-                    ),
-                    const PopupMenuItem(
-                      value: 'delete',
-                      child: ListTile(
-                        leading: Icon(Icons.delete, color: Colors.red),
-                        title: Text('删除', style: TextStyle(color: Colors.red)),
-                        contentPadding: EdgeInsets.zero,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
     );
   }
 
@@ -443,22 +655,20 @@ class _HomeScreenState extends State<HomeScreen> {
           Text(
             '选择或创建一个笔记',
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              color: Theme.of(context).colorScheme.outline,
-            ),
+                  color: Theme.of(context).colorScheme.outline,
+                ),
           ),
         ],
       ),
     );
   }
 
-  void _handleEditorAction(String action) async {
-    if (_selectedNote == null) return;
-
+  void _handleEditorAction(String action, Note note) async {
     switch (action) {
       case 'duplicate':
-        final duplicatedNote = _selectedNote!.copyWith(
+        final duplicatedNote = note.copyWith(
           id: DateTime.now().millisecondsSinceEpoch.toString(),
-          title: '${_selectedNote!.title} (副本)',
+          title: '${note.title} (副本)',
           createdAt: DateTime.now(),
           updatedAt: DateTime.now(),
         );
@@ -475,7 +685,7 @@ class _HomeScreenState extends State<HomeScreen> {
         }
         break;
       case 'delete':
-        await _deleteNote(_selectedNote!);
+        await _deleteNote(note);
         break;
     }
   }
@@ -491,9 +701,13 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       }
       final text = buffer.toString().replaceAll('\n', ' ').trim();
-      return text.isEmpty ? '富文本内容' : (text.length > 100 ? '${text.substring(0, 100)}...' : text);
+      return text.isEmpty
+          ? '富文本内容'
+          : (text.length > 100 ? '${text.substring(0, 100)}...' : text);
     } catch (e) {
-      return content.length > 100 ? '${content.substring(0, 100)}...' : content;
+      return content.length > 100
+          ? '${content.substring(0, 100)}...'
+          : content;
     }
   }
 
@@ -526,7 +740,9 @@ String _extractTitle(String content) {
     }
     final fullText = buffer.toString();
     final firstLine = fullText.split('\n').first.trim();
-    return firstLine.length > 50 ? '${firstLine.substring(0, 50)}...' : firstLine;
+    return firstLine.length > 50
+        ? '${firstLine.substring(0, 50)}...'
+        : firstLine;
   } catch (e) {
     return '';
   }
@@ -620,16 +836,19 @@ class _EditorScreenWrapperState extends State<_EditorScreenWrapper> {
                           ),
                           FilledButton(
                             onPressed: () => Navigator.pop(context, true),
-                            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                            style: FilledButton.styleFrom(
+                                backgroundColor: Colors.red),
                             child: const Text('删除'),
                           ),
                         ],
                       ),
                     );
                     if (confirmed == true && mounted) {
-                      final result = await widget.storageService.deleteNote(_currentNote.id);
+                      final result = await widget.storageService
+                          .deleteNote(_currentNote.id);
                       if (result.success) {
-                        await ImageStorageService().deleteImagesForNote(_currentNote.id);
+                        await ImageStorageService()
+                            .deleteImagesForNote(_currentNote.id);
                       }
                       if (result.success && mounted) {
                         Navigator.of(context).pop();
