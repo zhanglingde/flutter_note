@@ -11,6 +11,7 @@ import 'package:highlight/languages/all.dart' as languages;
 import 'package:dart_quill_delta/dart_quill_delta.dart';
 import 'dart:convert';
 import '../utils/markdown_auto_converter.dart';
+import '../utils/cn_en_formatter.dart';
 import '../services/image_storage_service.dart';
 import 'outline_sidebar.dart';
 
@@ -518,6 +519,15 @@ class _RichTextEditorState extends State<RichTextEditor> {
                     : Theme.of(context).colorScheme.outline,
               ),
               onPressed: () => setState(() => _showOutline = !_showOutline),
+            ),
+          ),
+          // 右侧：中英文格式化
+          Tooltip(
+            message: '中英文格式化',
+            child: IconButton(
+              icon: const Icon(Icons.auto_fix_high, size: 20),
+              onPressed: () => CnEnFormatter.formatDocument(_controller),
+              tooltip: '中英文格式化',
             ),
           ),
           // 右侧：Markdown 开关

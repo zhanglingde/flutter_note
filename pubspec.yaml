@@ -53,6 +53,15 @@ dependencies:
   # Syntax highlighting
   highlight: ^0.7.0
 
+# sqlite3 包默认从 GitHub 下载预编译 DLL，网络不通时构建失败。
+# 改为使用 Windows 系统自带的 winsqlite3.dll（C:\Windows\System32\）。
+# 网络恢复后可移除此配置，让包自行下载最新版。
+hooks:
+  user_defines:
+    sqlite3:
+      source: system
+      name_windows: winsqlite3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -9,7 +9,6 @@
   - 对齐方式（左对齐、居中、右对齐、两端对齐）
   - 标题级别（H1、H2、H3）
   - 有序列表和无序列表
-  - 撤销/重做功能
   - **Markdown 自动转换**：输入 Markdown 语法后自动转换为富文本格式
     - 标题：`# 标题` → H1, `## 标题` → H2, `### 标题` → H3
     - 粗体：`**文本**` → **文本**
@@ -42,7 +41,39 @@
 - **Flutter SDK**: ^3.11.0
 - **富文本编辑器**: flutter_quill
 - **Markdown 渲染**: flutter_markdown
-- **本地存储**: Hive
+- **本地存储**: SQLite（sqflite）
+
+## 文档格式化规则
+
+点击编辑器工具栏的格式化按钮（✨），会对当前文档执行以下格式化，遵循[中文文案排版指北](https://github.com/sparanoid/chinese-copywriting-guidelines)：
+
+### 文本间距
+
+| 规则 | 示例 |
+|------|------|
+| 中文与英文/数字之间加空格 | `你好world` → `你好 world` |
+| 英文/数字与中文之间加空格 | `hello世界` → `hello 世界` |
+| 中文后跟数字加空格 | `第3章` → `第 3 章` |
+| 数字后跟中文加空格 | `2025年` → `2025 年` |
+| 数字与单位之间加空格 | `10Gbps` → `10 Gbps`，`20TB` → `20 TB` |
+| 数字与百分号/度号间不加空格 | `15 %` → `15%`，`90 °` → `90°` |
+| 已有空格不重复添加 | `你好 world` → `你好 world` |
+
+### 标题排版
+
+- 标题前自动插入空行（首行标题除外）
+- 标题后自动插入空行（末行标题除外）
+- 连续标题之间只插入一个空行
+- 已有空行不重复插入
+
+### 跳过规则
+
+以下内容不参与格式化：
+
+- **代码块**内的文本不处理
+- **行内代码**不处理
+- 全角标点之间不加空格
+- 纯中文、纯英文、纯数字内容不变
 
 ## 快速开始
 
@@ -86,10 +117,13 @@ lib/
 ├── models/
 │   └── note.dart               # 笔记数据模型
 ├── services/
-│   └── note_storage_service.dart  # 存储服务
+│   ├── note_storage_service.dart  # 存储服务
+│   └── image_storage_service.dart # 图片存储服务
 ├── screens/
 │   ├── home_screen.dart        # 首页（笔记列表）
 │   └── editor_screen.dart      # 编辑器页面
+├── utils/
+│   └── cn_en_formatter.dart    # 中英文混排格式化
 └── widgets/
     ├── rich_text_editor.dart   # 富文本编辑器组件
     └── markdown_editor.dart    # Markdown 编辑器组件

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:path_provider/path_provider.dart';
 export 'package:sqflite/sqflite.dart' show Database, ConflictAlgorithm;
 import 'package:path/path.dart' as p;
 import '../models/note.dart';
@@ -37,7 +38,9 @@ class NoteStorageService {
         databaseFactory = databaseFactoryFfi;
       }
 
-      final dbPath = await getDatabasesPath();
+      // 使用系统应用数据目录，避免 flutter clean 误删
+      final appDir = await getApplicationSupportDirectory();
+      final dbPath = appDir.path;
       final path = p.join(dbPath, _dbName);
 
       _db = await openDatabase(
