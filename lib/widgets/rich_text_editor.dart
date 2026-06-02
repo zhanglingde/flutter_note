@@ -460,10 +460,10 @@ class _RichTextEditorState extends State<RichTextEditor> {
   Widget _buildToolbar() {
     return Container(
       height: 48,
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      decoration: const BoxDecoration(
+        color: Color(0xFFFFFFFF),
         border: Border(
-          bottom: BorderSide(color: Theme.of(context).dividerColor),
+          bottom: BorderSide(color: Color(0xFFF8F8F8)),
         ),
       ),
       child: Row(
@@ -903,7 +903,9 @@ class _RichTextEditorState extends State<RichTextEditor> {
 
   @override
   Widget build(BuildContext context) {
-    final editorWidget = Listener(
+    final editorWidget = Container(
+      color: const Color(0xFFFFFFFF),  // 编辑区背景色
+      child: Listener(
       behavior: HitTestBehavior.translucent,
       onPointerDown: (event) {
         _isDragging = true;
@@ -965,18 +967,19 @@ class _RichTextEditorState extends State<RichTextEditor> {
             ),
           );
       }),
+    ),
     );
-
+    // ================= 布局 ==============
     return Column(
       children: [
-        _buildToolbar(),
+        _buildToolbar(),  // 工具栏
         Expanded(
           child: _showOutline
               ? Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Expanded(child: editorWidget),
-                    _buildDragHandle(),
+                    Expanded(child: editorWidget),   // 编辑区域
+                    _buildDragHandle(),         // 大纲
                     SizedBox(
                       width: _outlineWidth.clamp(160.0, 400.0),
                       child: Container(
