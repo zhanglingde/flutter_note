@@ -8,6 +8,7 @@ import 'package:super_clipboard/super_clipboard.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:highlight/highlight.dart' as highlight;
 import 'package:highlight/languages/all.dart' as languages;
+import 'package:lucide_icons/lucide_icons.dart';
 import 'package:dart_quill_delta/dart_quill_delta.dart';
 import 'dart:convert';
 import '../utils/markdown_auto_converter.dart';
@@ -59,24 +60,11 @@ class _RichTextEditorState extends State<RichTextEditor> {
   /// Markdown 自动转换器
   MarkdownAutoConverter? _markdownConverter;
 
-  /// 是否启用 Markdown 自动转换
-  bool _markdownEnabled = true;
-
   /// 是否显示大纲
   bool _showOutline = false;
 
   /// 大纲面板宽度
   double _outlineWidth = 240;
-
-  /// 切换 Markdown 自动转换
-  void toggleMarkdown() {
-    setState(() {
-      _markdownEnabled = !_markdownEnabled;
-      if (_markdownConverter != null) {
-        _markdownConverter!.enabled = _markdownEnabled;
-      }
-    });
-  }
 
   @override
   void initState() {
@@ -126,7 +114,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
 
     _markdownConverter = MarkdownAutoConverter(
       controller: _controller,
-      enabled: _markdownEnabled,
+      enabled: true,
       onCodeBlockCreated: (offset, lang) {
         _codeBlockLanguages[offset] = lang;
         // 同时写入 Delta 持久化
@@ -233,7 +221,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
 
   /// 检测 Markdown 触发条件
   void _detectMarkdownTrigger() {
-    if (_markdownConverter == null || !_markdownEnabled) return;
+    if (_markdownConverter == null) return;
 
     final selection = _controller.selection;
     if (!selection.isValid || !selection.isCollapsed) return;
@@ -493,13 +481,13 @@ class _RichTextEditorState extends State<RichTextEditor> {
                   _toolbarDivider(),
                   // 粘贴图片按钮
                   IconButton(
-                    icon: const Icon(Icons.content_paste, size: 20),
+                    icon: const Icon(LucideIcons.clipboardPaste, size: 20),
                     onPressed: _pasteImageFromClipboard,
                     tooltip: '粘贴图片',
                   ),
                   // 选择图片按钮
                   IconButton(
-                    icon: const Icon(Icons.image_outlined, size: 20),
+                    icon: const Icon(LucideIcons.imagePlus, size: 20),
                     onPressed: _pickImageFromFile,
                     tooltip: '选择图片',
                   ),
@@ -512,7 +500,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
             message: _showOutline ? '关闭大纲' : '打开大纲',
             child: IconButton(
               icon: Icon(
-                Icons.menu_book_outlined,
+                LucideIcons.listTree,
                 size: 20,
                 color: _showOutline
                     ? Theme.of(context).colorScheme.primary
@@ -525,25 +513,9 @@ class _RichTextEditorState extends State<RichTextEditor> {
           Tooltip(
             message: '中英文格式化',
             child: IconButton(
-              icon: const Icon(Icons.auto_fix_high, size: 20),
+              icon: const Icon(LucideIcons.sparkles, size: 20),
               onPressed: () => CnEnFormatter.formatDocument(_controller),
               tooltip: '中英文格式化',
-            ),
-          ),
-          // 右侧：Markdown 开关
-          Tooltip(
-            message: _markdownEnabled
-                ? 'Markdown 自动转换：开'
-                : 'Markdown 自动转换：关',
-            child: IconButton(
-              icon: Icon(
-                Icons.code,
-                size: 20,
-                color: _markdownEnabled
-                    ? Theme.of(context).colorScheme.primary
-                    : Theme.of(context).colorScheme.outline,
-              ),
-              onPressed: toggleMarkdown,
             ),
           ),
         ],
@@ -564,10 +536,10 @@ class _RichTextEditorState extends State<RichTextEditor> {
       icon: const Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.format_shapes, size: 20),
+          Icon(LucideIcons.type, size: 20),
           SizedBox(width: 2),
-          Text('段落', style: TextStyle(fontSize: 12)),
-          Icon(Icons.arrow_drop_down, size: 16),
+          // Text('段落', style: TextStyle(fontSize: 12)),
+          Icon(LucideIcons.chevronDown, size: 14),
         ],
       ),
       tooltip: '段落',
@@ -606,10 +578,10 @@ class _RichTextEditorState extends State<RichTextEditor> {
       icon: const Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.text_format, size: 20),
+          Icon(LucideIcons.caseSensitive, size: 20),
           SizedBox(width: 2),
-          Text('格式', style: TextStyle(fontSize: 12)),
-          Icon(Icons.arrow_drop_down, size: 16),
+          // Text('格式', style: TextStyle(fontSize: 12)),
+          Icon(LucideIcons.chevronDown, size: 14),
         ],
       ),
       tooltip: '格式',
