@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:html/parser.dart' as html_parser;
@@ -37,12 +38,42 @@ class WebClipperService {
     'main',
   ];
 
+  /// 获取网站 favicon（PNG/JPEG 格式），返回字节数据或 null
+  static Future<Uint8List?> fetchFavicon(String url) async {
+    try {
+      final uri = Uri.parse(url);
+      final faviconUrl = Uri.https(uri.host, '/favicon.ico');
+      final response = await http
+          .get(faviconUrl, headers: _headers)
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode != 200 || response.bodyBytes.length < 100) {
+        return null;
+      }
+      final bytes = response.bodyBytes;
+      // 仅支持 PNG 和 JPEG（Flutter 不支持 ICO 格式）
+      final isPng = bytes.length >= 4 &&
+          bytes[0] == 0x89 &&
+          bytes[1] == 0x50 &&
+          bytes[2] == 0x4E &&
+          bytes[3] == 0x47;
+      final isJpeg = bytes.length >= 3 &&
+          bytes[0] == 0xFF &&
+          bytes[1] == 0xD8 &&
+          bytes[2] == 0xFF;
+      if (!isPng && !isJpeg) return null;
+      return bytes;
+    } catch (_) {
+      return null;
+    }
+  }
+
   // ============================================================
   // 主入口：根据链接路由到不同平台的处理逻辑
   // ============================================================
 
   static Future<ClipResult> fetchAndConvert(String url) async {
-    if (_isZhihu(url)) {
+    // 知乎问答链接：Web 平台使用 HTTP 方案，其他平台由 WebView 处理（不经过此处）
+    if (_isZhihu(url) && _isZhihuQuestion(url)) {
       return _clipZhihu(url);
     }
     return _clipGeneric(url);
@@ -51,6 +82,12 @@ class WebClipperService {
   static bool _isZhihu(String url) {
     final host = Uri.tryParse(url)?.host ?? '';
     return host.contains('zhihu.com');
+  }
+
+  static bool _isZhihuQuestion(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return false;
+    return uri.pathSegments.contains('question');
   }
 
   // ============================================================
@@ -176,8 +213,8 @@ class WebClipperService {
       final body = document.body;
       if (body == null) return ClipResult.failure('无法解析回答 HTML');
 
-      _removeNoise(body);
-      final contentDelta = _convertToDelta(body);
+      removeNoise(body);
+      final contentDelta = convertHtmlToDelta(body);
 
       // 组装最终 Delta：标题(H1) + 正文
       final delta = Delta();
@@ -244,14 +281,14 @@ class WebClipperService {
         return ClipResult.failure('无法识别网页正文区域');
       }
 
-      _removeNoise(contentElement);
+      removeNoise(contentElement);
 
       final textLength = contentElement.text.trim().length;
       if (textLength < 20) {
         return ClipResult.failure('提取到的正文内容过短（仅 $textLength 字符）');
       }
 
-      final delta = _convertToDelta(contentElement);
+      final delta = convertHtmlToDelta(contentElement);
       if (delta.isEmpty) {
         return ClipResult.failure('转换后内容为空');
       }
@@ -302,7 +339,8 @@ class WebClipperService {
     return best;
   }
 
-  static void _removeNoise(Element root) {
+  /// 移除 HTML 噪声元素（公开方法供其他服务复用）
+  static void removeNoise(Element root) {
     const noiseSelectors = [
       'script', 'style', 'noscript', 'iframe',
       'nav', 'header', 'footer',
@@ -323,12 +361,13 @@ class WebClipperService {
   // HTML → Quill Delta 转换
   // ============================================================
 
-  static Delta _convertToDelta(Element element) {
+  /// HTML Element → Quill Delta 转换（公开方法供其他服务复用）
+  static Delta convertHtmlToDelta(Element element) {
     final delta = Delta();
     for (final node in element.nodes) {
       _processNode(node, delta);
     }
-    _cleanDelta(delta);
+    cleanDelta(delta);
     return delta;
   }
 
@@ -461,7 +500,8 @@ class WebClipperService {
     }
   }
 
-  static void _cleanDelta(Delta delta) {
+  /// 清理连续空行（公开方法供其他服务复用）
+  static void cleanDelta(Delta delta) {
     final ops = delta.toList();
     delta.delete(delta.length);
 

@@ -54,6 +54,7 @@ dependencies:
 
   # Web clipper
   http: ^1.2.0
+  flutter_inappwebview: ^6.1.5
   # Syntax highlighting
   highlight: ^0.7.0
   html: ^0.15.6

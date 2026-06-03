@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart';
@@ -15,7 +17,11 @@ import '../utils/markdown_auto_converter.dart';
 import '../utils/cn_en_formatter.dart';
 import '../services/image_storage_service.dart';
 import '../services/web_clipper_service.dart';
+import '../services/zhihu_webview_service.dart';
+import '../services/xhs_webview_service.dart';
 import 'outline_sidebar.dart';
+import 'zhihu_webview_page.dart';
+import 'xhs_webview_page.dart';
 import 'web_clipper_dialog.dart';
 
 /// 富文本编辑器组件
@@ -458,7 +464,25 @@ class _RichTextEditorState extends State<RichTextEditor> {
     setState(() => _isClipping = true);
 
     try {
-      final result = await WebClipperService.fetchAndConvert(url);
+      final ClipResult result;
+
+      if (!kIsWeb && ZhihuWebViewService.isZhihuQuestion(url)) {
+        // 知乎问答 → WebView 拦截 Feeds API
+        result = await Navigator.of(context).push<ClipResult>(
+          MaterialPageRoute(
+            builder: (_) => ZhihuWebViewPage(url: url),
+          ),
+        ) ?? ClipResult.failure('知乎剪藏已取消');
+      } else if (!kIsWeb && XhsWebViewService.isXiaohongshu(url)) {
+        // 小红书 → WebView 加载页面提取 meta 标签
+        result = await Navigator.of(context).push<ClipResult>(
+          MaterialPageRoute(
+            builder: (_) => XhsWebViewPage(url: url),
+          ),
+        ) ?? ClipResult.failure('小红书剪藏已取消');
+      } else {
+        result = await WebClipperService.fetchAndConvert(url);
+      }
 
       if (!mounted) return;
 
@@ -474,22 +498,73 @@ class _RichTextEditorState extends State<RichTextEditor> {
 
       final delta = result.delta!;
 
-      // 追加来源链接
-      delta.insert('\n');
-      delta.insert('来源：');
-      delta.insert(url, {'link': url});
-      delta.insert('\n');
+      // 尝试获取网站 favicon
+      String? faviconPath;
+      try {
+        final faviconBytes = await WebClipperService.fetchFavicon(url);
+        if (faviconBytes != null) {
+          final ext = _isPngBytes(faviconBytes) ? 'png' : 'jpg';
+          faviconPath = await _imageService.saveImage(
+            faviconBytes, widget.noteId, extension: ext,
+          );
+        }
+      } catch (_) {}
 
-      // 在当前光标位置插入
+      // 构建 insert delta：标题后插入来源（favicon + 链接），再接正文
+      final ops = delta.toList();
       final insertOffset = _controller.selection.baseOffset;
       final insertDelta = Delta()..retain(insertOffset);
-      for (final op in delta.toList()) {
-        if (op.isInsert) {
-          insertDelta.insert(op.data, op.attributes);
+
+      // 找到标题结束位置（最后一个带 header 属性的 \n）
+      int splitAfter = -1;
+      for (int i = 0; i < ops.length; i++) {
+        final op = ops[i];
+        if (op.isInsert && op.data == '\n' && op.attributes?['header'] != null) {
+          splitAfter = i;
+        } else if (splitAfter >= 0) {
+          break;
         }
       }
 
-      final newOffset = insertOffset + delta.length;
+      if (splitAfter >= 0) {
+        // 标题部分
+        for (int i = 0; i <= splitAfter; i++) {
+          final op = ops[i];
+          if (op.isInsert) insertDelta.insert(op.data, op.attributes);
+        }
+        // 来源区域：favicon + 链接
+        if (faviconPath != null) {
+          insertDelta.insert({
+            'image': jsonEncode({'source': faviconPath, 'width': 24}),
+          });
+          insertDelta.insert(' ');
+        }
+        insertDelta.insert(url, {'link': url});
+        insertDelta.insert('\n');
+        // 正文部分
+        for (int i = splitAfter + 1; i < ops.length; i++) {
+          final op = ops[i];
+          if (op.isInsert) insertDelta.insert(op.data, op.attributes);
+        }
+      } else {
+        // 无标题：来源在前，正文在后
+        if (faviconPath != null) {
+          insertDelta.insert({
+            'image': jsonEncode({'source': faviconPath, 'width': 24}),
+          });
+          insertDelta.insert(' ');
+        }
+        insertDelta.insert(url, {'link': url});
+        insertDelta.insert('\n');
+        insertDelta.insert('\n');
+        for (final op in ops) {
+          if (op.isInsert) insertDelta.insert(op.data, op.attributes);
+        }
+      }
+
+      final newOffset = insertOffset + delta.length +
+          (faviconPath != null ? 2 : 0) + // favicon image + space
+          url.length + 1; // url + \n
       _controller.compose(
         insertDelta,
         TextSelection.collapsed(offset: newOffset),
@@ -510,6 +585,14 @@ class _RichTextEditorState extends State<RichTextEditor> {
   @override
   void didUpdateWidget(RichTextEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
+  }
+
+  static bool _isPngBytes(Uint8List bytes) {
+    return bytes.length >= 4 &&
+        bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4E &&
+        bytes[3] == 0x47;
   }
 
   @override
