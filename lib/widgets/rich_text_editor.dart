@@ -14,7 +14,9 @@ import 'dart:convert';
 import '../utils/markdown_auto_converter.dart';
 import '../utils/cn_en_formatter.dart';
 import '../services/image_storage_service.dart';
+import '../services/web_clipper_service.dart';
 import 'outline_sidebar.dart';
+import 'web_clipper_dialog.dart';
 
 /// 富文本编辑器组件
 class RichTextEditor extends StatefulWidget {
@@ -64,6 +66,9 @@ class _RichTextEditorState extends State<RichTextEditor> {
 
   /// 是否显示大纲
   bool _showOutline = false;
+
+  /// 是否正在剪藏
+  bool _isClipping = false;
 
   /// 大纲面板宽度
   double _outlineWidth = 240;
@@ -442,6 +447,66 @@ class _RichTextEditorState extends State<RichTextEditor> {
     );
   }
 
+  /// 剪藏网页内容
+  Future<void> _clipWebPage() async {
+    final url = await showDialog<String>(
+      context: context,
+      builder: (context) => const WebClipperDialog(),
+    );
+    if (url == null || !mounted) return;
+
+    setState(() => _isClipping = true);
+
+    try {
+      final result = await WebClipperService.fetchAndConvert(url);
+
+      if (!mounted) return;
+
+      if (!result.isSuccess) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result.error ?? '无法提取该网页内容'),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+        return;
+      }
+
+      final delta = result.delta!;
+
+      // 追加来源链接
+      delta.insert('\n');
+      delta.insert('来源：');
+      delta.insert(url, {'link': url});
+      delta.insert('\n');
+
+      // 在当前光标位置插入
+      final insertOffset = _controller.selection.baseOffset;
+      final insertDelta = Delta()..retain(insertOffset);
+      for (final op in delta.toList()) {
+        if (op.isInsert) {
+          insertDelta.insert(op.data, op.attributes);
+        }
+      }
+
+      final newOffset = insertOffset + delta.length;
+      _controller.compose(
+        insertDelta,
+        TextSelection.collapsed(offset: newOffset),
+        ChangeSource.local,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('剪藏失败：$e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isClipping = false);
+      }
+    }
+  }
+
   @override
   void didUpdateWidget(RichTextEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -492,6 +557,19 @@ class _RichTextEditorState extends State<RichTextEditor> {
                     icon: const Icon(LucideIcons.imagePlus, size: 20),
                     onPressed: _pickImageFromFile,
                     tooltip: '选择图片',
+                  ),
+                  _toolbarDivider(),
+                  // 网页剪藏按钮
+                  IconButton(
+                    icon: _isClipping
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(LucideIcons.link2, size: 20),
+                    onPressed: _isClipping ? null : _clipWebPage,
+                    tooltip: '剪藏网页',
                   ),
                 ],
               ),
