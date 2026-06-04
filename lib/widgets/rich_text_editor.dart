@@ -674,11 +674,11 @@ class _RichTextEditorState extends State<RichTextEditor> {
           ),
           // 右侧：中英文格式化
           Tooltip(
-            message: '中英文格式化',
+            message: '美化',
             child: IconButton(
               icon: const Icon(LucideIcons.sparkles, size: 20),
               onPressed: () => CnEnFormatter.formatDocument(_controller),
-              tooltip: '中英文格式化',
+              tooltip: '美化',
             ),
           ),
           ...widget.actions,

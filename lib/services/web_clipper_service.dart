@@ -293,6 +293,26 @@ class WebClipperService {
         return ClipResult.failure('转换后内容为空');
       }
 
+      // 如果 delta 不以标题开头，提取网页标题作为 H1
+      if (!_startsWithHeader(delta)) {
+        final pageTitle = document.querySelector('title')?.text.trim() ??
+            document
+                .querySelector('meta[property="og:title"]')
+                ?.attributes['content']
+                ?.trim() ??
+            '';
+        if (pageTitle.isNotEmpty) {
+          final titled = Delta();
+          titled.insert(pageTitle, {'header': 1});
+          titled.insert('\n', {'header': 1});
+          titled.insert('\n');
+          for (final op in delta.toList()) {
+            if (op.isInsert) titled.insert(op.data, op.attributes);
+          }
+          return ClipResult.success(titled);
+        }
+      }
+
       return ClipResult.success(delta);
     } on TimeoutException {
       return ClipResult.failure('请求超时，请检查网络连接');
@@ -304,6 +324,21 @@ class WebClipperService {
   // ============================================================
   // 通用 HTML 解析辅助
   // ============================================================
+
+  /// 检查 delta 是否以标题（header 属性）开头
+  static bool _startsWithHeader(Delta delta) {
+    for (final op in delta.toList()) {
+      if (!op.isInsert) continue;
+      final data = op.data;
+      if (data == '\n') {
+        return op.attributes?['header'] != null;
+      }
+      if (data is String && data.trim().isNotEmpty) {
+        return false;
+      }
+    }
+    return false;
+  }
 
   static Element? _findMainContent(Document document) {
     for (final selector in _contentSelectors) {

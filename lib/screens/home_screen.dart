@@ -115,6 +115,24 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  /// 关闭标签页（不保存，用于删除笔记时先关闭标签页）
+  void _closeTabWithoutSave(String tabId) {
+    final index = _tabs.indexWhere((t) => t.id == tabId);
+    if (index < 0) return;
+    setState(() {
+      _tabs.removeAt(index);
+      if (_activeTabId == tabId) {
+        if (_tabs.isEmpty) {
+          _activeTabId = null;
+        } else if (index < _tabs.length) {
+          _activeTabId = _tabs[index].id;
+        } else {
+          _activeTabId = _tabs.last.id;
+        }
+      }
+    });
+  }
+
   /// LRU 淘汰最旧的标签页
   void _evictOldestTab() {
     if (_tabs.isEmpty) return;
@@ -244,9 +262,9 @@ class _HomeScreenState extends State<HomeScreen> {
       final result = await widget.storageService.deleteNote(note.id);
       if (result.success) {
         await ImageStorageService().deleteImagesForNote(note.id);
-        // 关闭对应标签页
+        // 关闭对应标签页（不保存，笔记已删除）
         if (_tabs.any((t) => t.id == note.id)) {
-          _closeTab(note.id);
+          _closeTabWithoutSave(note.id);
         }
         _loadNotes();
       } else if (mounted) {
