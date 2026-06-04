@@ -86,6 +86,10 @@ class _RichTextEditorState extends State<RichTextEditor> {
     super.initState();
     HardwareKeyboard.instance.addHandler(_handleGlobalKeyEvent);
     _initializeController();
+    // 首帧渲染后请求焦点
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNode.requestFocus();
+    });
   }
 
   void _initializeController() {
