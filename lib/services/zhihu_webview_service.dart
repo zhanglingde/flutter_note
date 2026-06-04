@@ -77,7 +77,7 @@ class ZhihuWebViewService {
   }
 
   /// 从拦截到的 Feeds API JSON 响应中解析内容并转为 ClipResult
-  static ClipResult parseFeedsResponse(String jsonResponse, String? answerId) {
+  static ClipResult parseFeedsResponse(String jsonResponse, String? answerId, {String? url}) {
     try {
       final json = jsonDecode(jsonResponse) as Map<String, dynamic>;
       final data = json['data'] as List?;
@@ -122,6 +122,10 @@ class ZhihuWebViewService {
       final delta = Delta();
       delta.insert(title, {'header': 1});
       delta.insert('\n', {'header': 1});
+      if (url != null) {
+        delta.insert(url, {'link': url, 'color': '#999999', 'size': 'small'});
+        delta.insert('\n');
+      }
       delta.insert('\n');
       for (final op in contentDelta.toList()) {
         if (op.isInsert) {

@@ -204,6 +204,29 @@ class _EditorScreenState extends State<EditorScreen> {
           initialContent: _currentNote.content,
           onContentChanged: _onContentChanged,
           noteId: _currentNote.id,
+          onClipToNewNote: (deltaJson) async {
+            final now = DateTime.now();
+            final note = Note(
+              id: now.millisecondsSinceEpoch.toString(),
+              title: '',
+              content: deltaJson,
+              type: 'rich_text',
+              createdAt: now,
+              updatedAt: now,
+            );
+            await widget.storageService.saveNote(note);
+            if (context.mounted) {
+              await Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => EditorScreen(
+                    note: note,
+                    storageService: widget.storageService,
+                  ),
+                ),
+              );
+            }
+          },
         ),
       ),
     );

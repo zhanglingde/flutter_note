@@ -87,6 +87,7 @@ class _ZhihuWebViewPageState extends State<ZhihuWebViewPage> {
     final result = ZhihuWebViewService.parseFeedsResponse(
       responseText,
       parsed.answerId,
+      url: widget.url,
     );
     _finish(result);
   }

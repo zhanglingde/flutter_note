@@ -216,10 +216,12 @@ class WebClipperService {
       removeNoise(body);
       final contentDelta = convertHtmlToDelta(body);
 
-      // 组装最终 Delta：标题(H1) + 正文
+      // 组装最终 Delta：标题(H1) + 来源链接 + 正文
       final delta = Delta();
       delta.insert(title, {'header': 1});
       delta.insert('\n', {'header': 1});
+      delta.insert(url, {'link': url, 'color': '#999999', 'size': 'small'});
+      delta.insert('\n');
       delta.insert('\n');
       for (final op in contentDelta.toList()) {
         if (op.isInsert) {
@@ -305,6 +307,8 @@ class WebClipperService {
           final titled = Delta();
           titled.insert(pageTitle, {'header': 1});
           titled.insert('\n', {'header': 1});
+          titled.insert(url, {'link': url, 'color': '#999999', 'size': 'small'});
+          titled.insert('\n');
           titled.insert('\n');
           for (final op in delta.toList()) {
             if (op.isInsert) titled.insert(op.data, op.attributes);

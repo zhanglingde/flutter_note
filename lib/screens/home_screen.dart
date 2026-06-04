@@ -172,6 +172,28 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ==================== 笔记操作 ====================
 
+  Future<void> _clipToNewNote(String deltaJson) async {
+    final now = DateTime.now();
+    final note = Note(
+      id: now.millisecondsSinceEpoch.toString(),
+      title: '',
+      content: deltaJson,
+      type: 'rich_text',
+      createdAt: now,
+      updatedAt: now,
+    );
+
+    final result = await widget.storageService.saveNote(note);
+    if (result.success && mounted) {
+      _loadNotes();
+      _openTab(note);
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.error ?? '创建笔记失败')),
+      );
+    }
+  }
+
   Future<void> _createNote() async {
     final now = DateTime.now();
     final note = Note(
@@ -334,6 +356,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     onContentChanged: (content) =>
                         _onTabContentChanged(tab.id, content),
                     noteId: tab.note.id,
+                    onClipToNewNote: (deltaJson) => _clipToNewNote(deltaJson),
                     actions: [
                       PopupMenuButton<String>(
                         onSelected: (action) =>
@@ -892,6 +915,29 @@ class _EditorScreenWrapperState extends State<_EditorScreenWrapper> {
           initialContent: _currentNote.content,
           onContentChanged: _onContentChanged,
           noteId: _currentNote.id,
+          onClipToNewNote: (deltaJson) async {
+            final now = DateTime.now();
+            final note = Note(
+              id: now.millisecondsSinceEpoch.toString(),
+              title: '',
+              content: deltaJson,
+              type: 'rich_text',
+              createdAt: now,
+              updatedAt: now,
+            );
+            await widget.storageService.saveNote(note);
+            if (context.mounted) {
+              await Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => _EditorScreenWrapper(
+                    note: note,
+                    storageService: widget.storageService,
+                  ),
+                ),
+              );
+            }
+          },
         ),
       ),
     );

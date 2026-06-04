@@ -48,7 +48,7 @@ class XhsWebViewService {
   }
 
   /// 从 JS 回传的 JSON 数据解析为 ClipResult
-  static ClipResult parseExtractedData(String jsonString) {
+  static ClipResult parseExtractedData(String jsonString, {String? url}) {
     try {
       final json = jsonDecode(jsonString) as Map<String, dynamic>;
 
@@ -75,6 +75,10 @@ class XhsWebViewService {
       if (title != null && title.isNotEmpty) {
         delta.insert(title, {'header': 1});
         delta.insert('\n', {'header': 1});
+        if (url != null) {
+          delta.insert(url, {'link': url, 'color': '#999999', 'size': 'small'});
+          delta.insert('\n');
+        }
       }
 
       // 正文

@@ -78,7 +78,7 @@ class _XhsWebViewPageState extends State<XhsWebViewPage> {
       _statusText = '正在解析内容...';
     });
 
-    final result = XhsWebViewService.parseExtractedData(jsonString);
+    final result = XhsWebViewService.parseExtractedData(jsonString, url: widget.url);
     _finish(result);
   }
 

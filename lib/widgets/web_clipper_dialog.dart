@@ -39,17 +39,33 @@ class _WebClipperDialogState extends State<WebClipperDialog> {
     return AlertDialog(
       title: const Text('剪藏网页'),
       content: SizedBox(
-        width: 400,
+        width: 420,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(
               controller: _controller,
               autofocus: true,
+              maxLines: null,
+              keyboardType: TextInputType.multiline,
               decoration: InputDecoration(
                 hintText: '输入网页链接，如 https://...',
                 errorText: _errorText,
                 prefixIcon: const Icon(Icons.link, size: 20),
+                filled: true,
+                fillColor: const Color(0xFFF9F9F9),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide.none,
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide.none,
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide.none,
+                ),
               ),
               onSubmitted: (_) => _submit(),
             ),
@@ -57,13 +73,38 @@ class _WebClipperDialogState extends State<WebClipperDialog> {
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: _submit,
-          child: const Text('确定'),
+        Row(
+          children: [
+            Expanded(
+              child: TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: TextButton.styleFrom(
+                  backgroundColor: const Color(0xFFEDEDED),
+                  foregroundColor: Colors.black87,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: const Text('取消'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextButton(
+                onPressed: _submit,
+                style: TextButton.styleFrom(
+                  backgroundColor: const Color(0xFF0ECF66),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: const Text('剪藏'),
+              ),
+            ),
+          ],
         ),
       ],
     );
