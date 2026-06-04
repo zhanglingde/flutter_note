@@ -790,7 +790,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-/// 从富文本内容中提取第一行作为标题
+/// 从富文本内容中提取第一个非空行作为标题
 String _extractTitle(String content) {
   if (content.isEmpty) return '';
   try {
@@ -801,11 +801,16 @@ String _extractTitle(String content) {
         buffer.write(op['insert']);
       }
     }
-    final fullText = buffer.toString();
-    final firstLine = fullText.split('\n').first.trim();
-    return firstLine.length > 50
-        ? '${firstLine.substring(0, 50)}...'
-        : firstLine;
+    final lines = buffer.toString().split('\n');
+    for (final line in lines) {
+      final trimmed = line.trim();
+      if (trimmed.isNotEmpty) {
+        return trimmed.length > 50
+            ? '${trimmed.substring(0, 50)}...'
+            : trimmed;
+      }
+    }
+    return '';
   } catch (e) {
     return '';
   }
