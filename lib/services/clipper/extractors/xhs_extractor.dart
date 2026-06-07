@@ -1,12 +1,23 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
 import 'package:dart_quill_delta/dart_quill_delta.dart';
-import 'web_clipper_service.dart';
+import 'package:flutter/foundation.dart';
+import '../../web_clipper_service.dart';
+import '../base_extractor.dart';
+import '../extract_context.dart';
+import '../webview_extractor_mixin.dart';
 
-/// 小红书 WebView 剪藏服务
-class XhsWebViewService {
-  /// 注入到 WebView 的 JS 脚本：页面加载后提取 meta 标签数据
-  static const String extractorScript = '''
+/// 小红书提取器（WebView meta 标签提取）
+class XhsExtractor extends BaseExtractor with WebViewExtractor {
+  @override
+  int get priority => 10;
+
+  @override
+  bool canExtract(Uri url) {
+    return url.host.contains('xiaohongshu.com');
+  }
+
+  @override
+  String get injectedScript => '''
 (function() {
   if (window.__xhsClipDone) return;
 
@@ -15,7 +26,6 @@ class XhsWebViewService {
   var ogTitle = document.querySelector('meta[name="og:title"]');
   result.title = ogTitle ? ogTitle.getAttribute('content') : document.title;
 
-  // 跳过登录页/通用标题
   if (!result.title || result.title === '小红书 - 你的生活兴趣社区' || result.title === '小红书') {
     return;
   }
@@ -41,14 +51,11 @@ class XhsWebViewService {
 })();
 ''';
 
-  /// 判断 URL 是否为小红书链接
-  static bool isXiaohongshu(String url) {
-    final host = Uri.tryParse(url)?.host ?? '';
-    return host.contains('xiaohongshu.com');
-  }
+  @override
+  String get handlerName => 'onXhsDataExtracted';
 
-  /// 从 JS 回传的 JSON 数据解析为 ClipResult
-  static ClipResult parseExtractedData(String jsonString, {String? url}) {
+  @override
+  ClipResult parseResponse(String jsonString, {String? url}) {
     try {
       final json = jsonDecode(jsonString) as Map<String, dynamic>;
 
@@ -56,7 +63,6 @@ class XhsWebViewService {
       final description = (json['description'] as String?)?.trim() ?? '';
       final images = (json['images'] as List?)?.cast<String>() ?? [];
 
-      // 去掉标题中的 " - 小红书" 后缀
       if (title != null && title.endsWith(' - 小红书')) {
         title = title.substring(0, title.length - ' - 小红书'.length);
       }
@@ -65,13 +71,8 @@ class XhsWebViewService {
         return ClipResult.failure('未能从小红书页面提取到内容');
       }
 
-      debugPrint('XhsWebView: title=$title');
-      debugPrint('XhsWebView: desc length=${description.length}');
-      debugPrint('XhsWebView: images=${images.length}');
-
       final delta = Delta();
 
-      // 标题
       if (title != null && title.isNotEmpty) {
         delta.insert(title, {'header': 1});
         delta.insert('\n', {'header': 1});
@@ -81,27 +82,29 @@ class XhsWebViewService {
         }
       }
 
-      // 正文
       if (description.isNotEmpty) {
         delta.insert(_formatDescription(description));
         delta.insert('\n');
       }
 
-      // 图片
       for (final src in images) {
         delta.insert({'image': src});
         delta.insert('\n');
       }
 
-      return ClipResult.success(delta);
+      return ClipResult.success(delta, metadata: ClipMetadata(title: title));
     } catch (e) {
-      debugPrint('XhsWebView: parse error=$e');
+      debugPrint('XhsExtractor: parse error=$e');
       return ClipResult.failure('解析小红书数据失败：$e');
     }
   }
 
-  /// 格式化小红书正文：将 #话题# 前后加空格
-  static String _formatDescription(String text) {
+  @override
+  Future<ClipResult> extract(ExtractContext context) async {
+    return ClipResult.failure('小红书提取器需要 WebView 环境');
+  }
+
+  String _formatDescription(String text) {
     return text.replaceAllMapped(
       RegExp(r'#([^#]+)#'),
       (m) => ' #${m.group(1)}',

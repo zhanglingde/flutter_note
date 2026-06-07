@@ -150,6 +150,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (index < 0) return;
 
     final title = _extractTitle(content);
+    debugPrint('_onTabContentChanged: tabId=$tabId, title=$title, content length=${content.length}, content preview=${content.length > 200 ? content.substring(0, 200) : content}');
     final updatedNote = _tabs[index].note.copyWith(
       content: content,
       title: title,
@@ -174,9 +175,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _clipToNewNote(String deltaJson) async {
     final now = DateTime.now();
+    final title = _extractTitle(deltaJson);
+    debugPrint('_clipToNewNote: id=${now.millisecondsSinceEpoch}, title=$title, content length=${deltaJson.length}');
     final note = Note(
       id: now.millisecondsSinceEpoch.toString(),
-      title: '',
+      title: title,
       content: deltaJson,
       type: 'rich_text',
       createdAt: now,
@@ -184,6 +187,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     final result = await widget.storageService.saveNote(note);
+    debugPrint('_clipToNewNote: saveNote result=${result.success}');
     if (result.success && mounted) {
       _loadNotes();
       _openTab(note);
@@ -944,9 +948,10 @@ class _EditorScreenWrapperState extends State<_EditorScreenWrapper> {
           noteId: _currentNote.id,
           onClipToNewNote: (deltaJson) async {
             final now = DateTime.now();
+            final title = _extractTitle(deltaJson);
             final note = Note(
               id: now.millisecondsSinceEpoch.toString(),
-              title: '',
+              title: title,
               content: deltaJson,
               type: 'rich_text',
               createdAt: now,

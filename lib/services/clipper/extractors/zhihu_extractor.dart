@@ -1,13 +1,27 @@
 import 'dart:convert';
+import 'package:dart_quill_delta/dart_quill_delta.dart';
 import 'package:flutter/foundation.dart';
 import 'package:html/parser.dart' as html_parser;
-import 'package:dart_quill_delta/dart_quill_delta.dart';
-import 'web_clipper_service.dart';
+import '../../web_clipper_service.dart';
+import '../base_extractor.dart';
+import '../extract_context.dart';
+import '../webview_extractor_mixin.dart';
 
-/// 知乎 WebView 剪藏服务
-class ZhihuWebViewService {
-  /// 注入到 WebView 的 JS 脚本：拦截 /api/v4/questions/*/feeds 响应
-  static const String interceptorScript = '''
+/// 知乎问答提取器（WebView 拦截 Feeds API）
+class ZhihuExtractor extends BaseExtractor with WebViewExtractor {
+  @override
+  int get priority => 10;
+
+  @override
+  bool canExtract(Uri url) {
+    final host = url.host;
+    if (host == 'zhuanlan.zhihu.com') return false;
+    if (!host.contains('zhihu.com')) return false;
+    return url.pathSegments.contains('question');
+  }
+
+  @override
+  String get injectedScript => '''
 (function() {
   var FEEDS_PATTERN = /\\/api\\/v4\\/questions\\/\\d+\\/feeds/;
 
@@ -49,36 +63,13 @@ class ZhihuWebViewService {
 })();
 ''';
 
-  /// 从 URL 中解析 questionId 和 answerId
-  static ({String? questionId, String? answerId}) parseUrl(String url) {
-    final uri = Uri.parse(url);
-    String? questionId;
-    String? answerId;
+  @override
+  String get handlerName => 'onFeedsCaptured';
 
-    for (int i = 0; i < uri.pathSegments.length - 1; i++) {
-      if (uri.pathSegments[i] == 'question') {
-        questionId = uri.pathSegments[i + 1];
-      }
-      if (uri.pathSegments[i] == 'answer') {
-        answerId = uri.pathSegments[i + 1];
-      }
-    }
-    return (questionId: questionId, answerId: answerId);
-  }
-
-  /// 判断 URL 是否为知乎问答链接（排除专栏）
-  static bool isZhihuQuestion(String url) {
-    final uri = Uri.tryParse(url);
-    if (uri == null) return false;
-    final host = uri.host;
-    if (host == 'zhuanlan.zhihu.com') return false;
-    if (!host.contains('zhihu.com')) return false;
-    return uri.pathSegments.contains('question');
-  }
-
-  /// 从拦截到的 Feeds API JSON 响应中解析内容并转为 ClipResult
-  static ClipResult parseFeedsResponse(String jsonResponse, String? answerId, {String? url}) {
+  @override
+  ClipResult parseResponse(String jsonResponse, {String? url}) {
     try {
+      final parsed = _parseUrl(url ?? '');
       final json = jsonDecode(jsonResponse) as Map<String, dynamic>;
       final data = json['data'] as List?;
       if (data == null || data.isEmpty) {
@@ -86,10 +77,10 @@ class ZhihuWebViewService {
       }
 
       Map<String, dynamic>? target;
-      if (answerId != null) {
+      if (parsed.answerId != null) {
         for (final item in data) {
           final t = item['target'] as Map<String, dynamic>?;
-          if (t?['id']?.toString() == answerId) {
+          if (t?['id']?.toString() == parsed.answerId) {
             target = t;
             break;
           }
@@ -108,9 +99,6 @@ class ZhihuWebViewService {
       if (content.isEmpty) {
         return ClipResult.failure('回答内容为空');
       }
-
-      debugPrint('ZhihuWebView: title=$title');
-      debugPrint('ZhihuWebView: content length=${content.length}');
 
       final document = html_parser.parse(content);
       final body = document.body;
@@ -133,10 +121,32 @@ class ZhihuWebViewService {
         }
       }
 
-      return ClipResult.success(delta);
+      return ClipResult.success(delta, metadata: ClipMetadata(title: title));
     } catch (e) {
-      debugPrint('ZhihuWebView: parse error=$e');
+      debugPrint('ZhihuExtractor: parse error=$e');
       return ClipResult.failure('解析知乎数据失败：$e');
     }
+  }
+
+  @override
+  Future<ClipResult> extract(ExtractContext context) async {
+    // WebView 提取器不通过此方法，由 ClipperWebViewPage 直接调用 parseResponse
+    return ClipResult.failure('知乎提取器需要 WebView 环境');
+  }
+
+  ({String? questionId, String? answerId}) _parseUrl(String url) {
+    final uri = Uri.parse(url);
+    String? questionId;
+    String? answerId;
+
+    for (int i = 0; i < uri.pathSegments.length - 1; i++) {
+      if (uri.pathSegments[i] == 'question') {
+        questionId = uri.pathSegments[i + 1];
+      }
+      if (uri.pathSegments[i] == 'answer') {
+        answerId = uri.pathSegments[i + 1];
+      }
+    }
+    return (questionId: questionId, answerId: answerId);
   }
 }

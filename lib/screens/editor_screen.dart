@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../models/note.dart';
 import '../services/note_storage_service.dart';
@@ -230,9 +231,10 @@ class _EditorScreenState extends State<EditorScreen> {
           noteId: _currentNote.id,
           onClipToNewNote: (deltaJson) async {
             final now = DateTime.now();
+            final title = _extractTitle(deltaJson);
             final note = Note(
               id: now.millisecondsSinceEpoch.toString(),
-              title: '',
+              title: title,
               content: deltaJson,
               type: 'rich_text',
               createdAt: now,
@@ -254,5 +256,30 @@ class _EditorScreenState extends State<EditorScreen> {
         ),
       ),
     );
+  }
+}
+
+String _extractTitle(String content) {
+  if (content.isEmpty) return '';
+  try {
+    final delta = jsonDecode(content) as List<dynamic>;
+    final buffer = StringBuffer();
+    for (final op in delta) {
+      if (op is Map<String, dynamic> && op['insert'] is String) {
+        buffer.write(op['insert']);
+      }
+    }
+    final lines = buffer.toString().split('\n');
+    for (final line in lines) {
+      final trimmed = line.trim();
+      if (trimmed.isNotEmpty) {
+        return trimmed.length > 50
+            ? '${trimmed.substring(0, 50)}...'
+            : trimmed;
+      }
+    }
+    return '';
+  } catch (e) {
+    return '';
   }
 }

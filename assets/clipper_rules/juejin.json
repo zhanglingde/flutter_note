@@ -1,0 +1,7 @@
+{
+  "name": "juejin.cn",
+  "url": "https://juejin.cn/post/*",
+  "title": "h1",
+  "content": "div.article-content",
+  "exclude": ["style", ".copy-code-btn"]
+}

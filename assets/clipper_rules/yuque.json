@@ -1,0 +1,7 @@
+{
+  "name": "yuque.com",
+  "url": "https://www.yuque.com/*/*/*",
+  "title": "h1",
+  "content": "div.yuque-doc-content",
+  "exclude": ["button"]
+}

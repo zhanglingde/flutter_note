@@ -1,21 +1,25 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:dart_quill_delta/dart_quill_delta.dart';
+import 'package:html/parser.dart' as html_parser;
+import '../services/clipper/clip_result.dart';
 import '../services/web_clipper_service.dart';
-import '../services/xhs_webview_service.dart';
 
-/// 小红书 WebView 剪藏页面
-class XhsWebViewPage extends StatefulWidget {
+/// WebView + Readability 通用剪藏页面
+/// 用于 JS 渲染的页面，HTTP 提取失败时的降级方案
+class ReadabilityWebViewPage extends StatefulWidget {
   final String url;
 
-  const XhsWebViewPage({super.key, required this.url});
+  const ReadabilityWebViewPage({super.key, required this.url});
 
   @override
-  State<XhsWebViewPage> createState() => _XhsWebViewPageState();
+  State<ReadabilityWebViewPage> createState() => _ReadabilityWebViewPageState();
 }
 
-class _XhsWebViewPageState extends State<XhsWebViewPage> {
+class _ReadabilityWebViewPageState extends State<ReadabilityWebViewPage> {
   bool _isLoading = true;
   bool _isProcessing = false;
   String _statusText = '正在加载页面...';
@@ -23,7 +27,6 @@ class _XhsWebViewPageState extends State<XhsWebViewPage> {
 
   Timer? _loadTimeoutTimer;
   bool _completed = false;
-  InAppWebViewController? _controller;
 
   @override
   void initState() {
@@ -39,9 +42,8 @@ class _XhsWebViewPageState extends State<XhsWebViewPage> {
 
   void _startLoadTimeout() {
     _loadTimeoutTimer?.cancel();
-    _loadTimeoutTimer = Timer(const Duration(seconds: 15), () {
+    _loadTimeoutTimer = Timer(const Duration(seconds: 30), () {
       if (!_completed && mounted) {
-        debugPrint('XhsWebView: load timeout');
         _finish(ClipResult.failure('页面加载超时'));
       }
     });
@@ -56,6 +58,39 @@ class _XhsWebViewPageState extends State<XhsWebViewPage> {
     }
   }
 
+  /// 页面加载完成后注入 JS 提取内容
+  void _onLoadStop(InAppWebViewController controller, WebUri? url) {
+    if (_completed) return;
+    setState(() {
+      _statusText = '正在等待页面渲染...';
+    });
+    _loadTimeoutTimer?.cancel();
+
+    // 延迟等待 JS 渲染完成（Bilibili 等重度 JS 页面需要时间渲染内容）
+    Future.delayed(const Duration(seconds: 3), () {
+      if (_completed || !mounted) return;
+      setState(() {
+        _isLoading = false;
+        _isProcessing = true;
+        _statusText = '正在提取内容...';
+      });
+
+      // 注入 JS 提取页面标题和 body innerHTML
+      controller.evaluateJavascript(source: '''
+        (function() {
+          try {
+            var title = document.title || '';
+            var body = document.body ? document.body.innerHTML : '';
+            var result = JSON.stringify({title: title, html: body});
+            window.flutter_inappwebview.callHandler('onReadabilityData', result);
+          } catch(e) {
+            window.flutter_inappwebview.callHandler('onReadabilityData', '');
+          }
+        })();
+      ''');
+    });
+  }
+
   void _onDataExtracted(List<dynamic> args) {
     if (_completed) return;
 
@@ -65,39 +100,57 @@ class _XhsWebViewPageState extends State<XhsWebViewPage> {
       return;
     }
 
-    // 跳过登录页/通用标题的数据
-    if (jsonString.contains('小红书 - 你的生活兴趣社区') ||
-        jsonString.contains('"title":"小红书"')) {
-      debugPrint('XhsWebView: skipping generic title data');
-      return;
+    try {
+      final data = jsonDecode(jsonString) as Map<String, dynamic>;
+      final rawHtml = data['html'] as String? ?? '';
+      final title = data['title'] as String? ?? '';
+
+      if (rawHtml.isEmpty) {
+        _finish(ClipResult.failure('页面内容为空'));
+        return;
+      }
+
+      // 用服务端 HTML 解析器提取正文（WebView 已渲染完成，HTML 包含完整内容）
+      final document = html_parser.parse(rawHtml);
+      final body = document.body;
+      if (body == null) {
+        _finish(ClipResult.failure('无法解析页面内容'));
+        return;
+      }
+
+      WebClipperService.removeNoise(body);
+      final contentDelta = WebClipperService.convertHtmlToDelta(body);
+
+      debugPrint('ReadabilityWebView: title=$title, contentDelta.length=${contentDelta.length}, isEmpty=${contentDelta.isEmpty}');
+
+      if (contentDelta.isEmpty) {
+        _finish(ClipResult.failure('提取到的正文内容为空'));
+        return;
+      }
+
+      final delta = Delta();
+      if (title.isNotEmpty) {
+        delta.insert(title);
+        delta.insert('\n', {'header': 1});
+        delta.insert(widget.url, {'link': widget.url, 'color': '#999999', 'size': 'small'});
+        delta.insert('\n');
+        delta.insert('\n');
+      }
+      for (final op in contentDelta.toList()) {
+        if (op.isInsert) {
+          delta.insert(op.data, op.attributes);
+        }
+      }
+
+      final deltaJson = jsonEncode(delta.toJson());
+      debugPrint('ReadabilityWebView: final delta length=${delta.length}, json length=${deltaJson.length}');
+      debugPrint('ReadabilityWebView: delta preview=${deltaJson.length > 500 ? deltaJson.substring(0, 500) : deltaJson}');
+
+      _finish(ClipResult.success(delta, metadata: ClipMetadata(title: title)));
+    } catch (e) {
+      debugPrint('ReadabilityWebViewPage: parse error=$e');
+      _finish(ClipResult.failure('解析页面内容失败：$e'));
     }
-
-    debugPrint('XhsWebView: data extracted');
-    setState(() {
-      _isProcessing = true;
-      _statusText = '正在解析内容...';
-    });
-
-    final result = XhsWebViewService.parseExtractedData(jsonString, url: widget.url);
-    _finish(result);
-  }
-
-  /// 当 SSR 页面的 title 出现时立即提取 meta 数据（在 JS 跳转登录页之前）
-  void _onTitleChanged(String? title) {
-    debugPrint('XhsWebView: title changed = $title');
-    if (_completed || _controller == null) return;
-    // 跳过登录页标题和无意义标题
-    if (title == null ||
-        title.isEmpty ||
-        title == '小红书 - 你的生活兴趣社区' ||
-        title == '小红书') {
-      return;
-    }
-    // SSR 内容已就绪，立即提取数据
-    debugPrint('XhsWebView: SSR title detected, extracting data NOW');
-    _controller!.evaluateJavascript(
-      source: XhsWebViewService.extractorScript,
-    );
   }
 
   @override
@@ -111,7 +164,7 @@ class _XhsWebViewPageState extends State<XhsWebViewPage> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('小红书剪藏'),
+          title: const Text('网页剪藏'),
           leading: IconButton(
             icon: const Icon(Icons.close),
             onPressed: () {
@@ -124,42 +177,20 @@ class _XhsWebViewPageState extends State<XhsWebViewPage> {
         body: Stack(
           children: [
             InAppWebView(
-              initialUrlRequest: URLRequest(
-                url: WebUri(widget.url),
-              ),
-              initialUserScripts: UnmodifiableListView([
-                UserScript(
-                  source: XhsWebViewService.extractorScript,
-                  injectionTime: UserScriptInjectionTime.AT_DOCUMENT_END,
-                ),
-              ]),
+              initialUrlRequest: URLRequest(url: WebUri(widget.url)),
               onWebViewCreated: (controller) {
-                _controller = controller;
                 controller.addJavaScriptHandler(
-                  handlerName: 'onXhsDataExtracted',
+                  handlerName: 'onReadabilityData',
                   callback: _onDataExtracted,
                 );
               },
-              onLoadStart: (controller, url) {
-                debugPrint('XhsWebView: load start $url');
-              },
-              onLoadStop: (controller, url) {
-                debugPrint('XhsWebView: load stop $url');
-              },
-              onTitleChanged: (controller, title) {
-                _onTitleChanged(title);
-              },
+              onLoadStop: _onLoadStop,
               onProgressChanged: (controller, progress) {
                 setState(() {
                   _progress = progress / 100.0;
                 });
               },
               onReceivedError: (controller, request, error) {
-                debugPrint('XhsWebView: error ${error.type} ${error.description}');
-                // 忽略 CONNECTION_ABORTED（由登录重定向引起）
-                if (error.type == WebResourceErrorType.CONNECTION_ABORTED) {
-                  return;
-                }
                 if (error.type == WebResourceErrorType.HOST_LOOKUP ||
                     error.type == WebResourceErrorType.CANNOT_CONNECT_TO_HOST ||
                     error.type == WebResourceErrorType.TIMEOUT) {

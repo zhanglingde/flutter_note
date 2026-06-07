@@ -17,11 +17,11 @@ import '../utils/markdown_auto_converter.dart';
 import '../utils/cn_en_formatter.dart';
 import '../services/image_storage_service.dart';
 import '../services/web_clipper_service.dart';
-import '../services/zhihu_webview_service.dart';
-import '../services/xhs_webview_service.dart';
+import '../services/clipper/extractor_registry.dart';
+import '../services/clipper/webview_extractor_mixin.dart';
 import 'outline_sidebar.dart';
-import 'zhihu_webview_page.dart';
-import 'xhs_webview_page.dart';
+import 'clipper_webview_page.dart';
+import 'extractor_webview_page.dart';
 import 'web_clipper_dialog.dart';
 
 /// 富文本编辑器组件
@@ -84,7 +84,14 @@ class _RichTextEditorState extends State<RichTextEditor> {
   @override
   void initState() {
     super.initState();
-    HardwareKeyboard.instance.addHandler(_handleGlobalKeyEvent);
+    _focusNode.onKeyEvent = (_, event) {
+      if (event is! KeyDownEvent) return KeyEventResult.ignored;
+      if (event.logicalKey == LogicalKeyboardKey.keyA &&
+          HardwareKeyboard.instance.isControlPressed) {
+        return _handleSelectAll() ? KeyEventResult.handled : KeyEventResult.ignored;
+      }
+      return KeyEventResult.ignored;
+    };
     _initializeController();
     // 首帧渲染后请求焦点
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -94,6 +101,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
 
   void _initializeController() {
     try {
+      debugPrint('RichTextEditor[${widget.noteId}].init: initialContent length=${widget.initialContent.length}');
       if (widget.initialContent.isNotEmpty) {
         final document = Document.fromJson(
           jsonDecode(widget.initialContent) as List<dynamic>,
@@ -107,6 +115,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
             ),
           ),
         );
+        debugPrint('RichTextEditor[${widget.noteId}].init: document.length=${_controller.document.length}');
         // 从已保存的文档中恢复代码块语言信息
         _loadCodeBlockLanguages();
       } else {
@@ -119,6 +128,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
         );
       }
     } catch (e) {
+      debugPrint('RichTextEditor[${widget.noteId}].init: FAILED to parse initialContent: $e');
       _controller = QuillController.basic(
         config: QuillControllerConfig(
           clipboardConfig: QuillClipboardConfig(
@@ -235,6 +245,8 @@ class _RichTextEditorState extends State<RichTextEditor> {
     _detectMarkdownTrigger();
 
     final json = jsonEncode(_controller.document.toDelta().toJson());
+    final docLen = _controller.document.length;
+    debugPrint('RichTextEditor[${widget.noteId}].onChanged: doc.length=$docLen, json.length=${json.length}');
     widget.onContentChanged(json);
   }
 
@@ -315,17 +327,6 @@ class _RichTextEditorState extends State<RichTextEditor> {
           return node.style.attributes.containsKey(Attribute.codeBlock.key);
         }
       }
-    }
-    return false;
-  }
-
-  /// 全局键盘事件：拦截代码块内 Ctrl+A 实现渐进式全选
-  bool _handleGlobalKeyEvent(KeyEvent event) {
-    if (!_focusNode.hasFocus) return false;
-    if (event is KeyDownEvent &&
-        event.logicalKey == LogicalKeyboardKey.keyA &&
-        HardwareKeyboard.instance.isControlPressed) {
-      return _handleSelectAll();
     }
     return false;
   }
@@ -470,24 +471,33 @@ class _RichTextEditorState extends State<RichTextEditor> {
     setState(() => _isClipping = true);
 
     try {
-      final ClipResult result;
+      final registry = ExtractorRegistry.instance;
+      ClipResult result;
 
-      if (!kIsWeb && ZhihuWebViewService.isZhihuQuestion(url)) {
-        // 知乎问答 → WebView 拦截 Feeds API
+      // 优先尝试 WebView 提取器（知乎/小红书）
+      final webviewExtractor = registry.matchWebView(url);
+      if (webviewExtractor != null) {
         result = await Navigator.of(context).push<ClipResult>(
           MaterialPageRoute(
-            builder: (_) => ZhihuWebViewPage(url: url),
+            builder: (_) => ExtractorWebViewPage(
+              url: url,
+              extractor: webviewExtractor,
+            ),
           ),
-        ) ?? ClipResult.failure('知乎剪藏已取消');
-      } else if (!kIsWeb && XhsWebViewService.isXiaohongshu(url)) {
-        // 小红书 → WebView 加载页面提取 meta 标签
-        result = await Navigator.of(context).push<ClipResult>(
-          MaterialPageRoute(
-            builder: (_) => XhsWebViewPage(url: url),
-          ),
-        ) ?? ClipResult.failure('小红书剪藏已取消');
+        ) ?? ClipResult.failure('剪藏已取消');
       } else {
-        result = await WebClipperService.fetchAndConvert(url);
+        // HTTP 提取（Readability + 规则模板）
+        result = await registry.extractViaHttp(url);
+
+        // HTTP 提取失败时，用 WebView 渲染页面后提取（降级）
+        if (!result.isSuccess && !kIsWeb) {
+          debugPrint('RichTextEditor: HTTP failed, falling back to WebView');
+          result = await Navigator.of(context).push<ClipResult>(
+            MaterialPageRoute(
+              builder: (_) => ReadabilityWebViewPage(url: url),
+            ),
+          ) ?? ClipResult.failure('剪藏已取消');
+        }
       }
 
       if (!mounted) return;
@@ -531,7 +541,6 @@ class _RichTextEditorState extends State<RichTextEditor> {
   @override
   void dispose() {
     _autoScrollTimer?.cancel();
-    HardwareKeyboard.instance.removeHandler(_handleGlobalKeyEvent);
     _controller.removeListener(_onContentChanged);
     _controller.dispose();
     _focusNode.dispose();
