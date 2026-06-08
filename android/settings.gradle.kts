@@ -1,3 +1,17 @@
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        // 注释掉原来的 google() 和 mavenCentral()
+        // google()
+        // mavenCentral()
+
+        // 换成阿里云镜像
+        maven { url = uri("https://maven.aliyun.com/repository/google") }
+        maven { url = uri("https://maven.aliyun.com/repository/jcenter") }
+        maven { url = uri("https://maven.aliyun.com/repository/public") }
+    }
+}
+
 pluginManagement {
     val flutterSdkPath =
         run {
