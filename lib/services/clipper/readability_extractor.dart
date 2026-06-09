@@ -65,7 +65,7 @@ class ReadabilityExtractor extends BaseExtractor {
     if (title != null && title.isNotEmpty) {
       delta.insert(title, {'header': 1});
       delta.insert('\n', {'header': 1});
-      delta.insert(url, {'link': url, 'color': '#999999', 'size': 'small'});
+      delta.insert(url, {'link': url, 'color': '#0000EE', 'size': '14.0'});
       delta.insert('\n');
       delta.insert('\n');
     }

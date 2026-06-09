@@ -7,6 +7,7 @@ import 'services/clipper/readability_extractor.dart';
 import 'services/clipper/template_rule.dart';
 import 'services/clipper/template_extractor.dart';
 import 'services/clipper/extractors/zhihu_extractor.dart';
+import 'services/clipper/extractors/zhihu_zhuanlan_extractor.dart';
 import 'services/clipper/extractors/xhs_extractor.dart';
 import 'screens/home_screen.dart';
 
@@ -27,6 +28,7 @@ Future<void> _initClipperRegistry() async {
 
   // 注册专用提取器
   registry.register(ZhihuExtractor());
+  registry.register(ZhihuZhuanlanExtractor());
   registry.register(XhsExtractor());
 
   // 注册规则模板提取器

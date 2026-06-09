@@ -132,7 +132,7 @@ class _ReadabilityWebViewPageState extends State<ReadabilityWebViewPage> {
       if (title.isNotEmpty) {
         delta.insert(title);
         delta.insert('\n', {'header': 1});
-        delta.insert(widget.url, {'link': widget.url, 'color': '#999999', 'size': 'small'});
+        delta.insert(widget.url, {'link': widget.url, 'color': '#0000EE', 'size': '14.0'});
         delta.insert('\n');
         delta.insert('\n');
       }

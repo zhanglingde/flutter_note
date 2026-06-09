@@ -3,7 +3,7 @@ import 'extract_context.dart';
 
 /// 提取器抽象基类
 abstract class BaseExtractor {
-  /// 判断是否能处理该 URL
+  /// 判断是否能处理该 URL,返回 true 能处理
   bool canExtract(Uri url);
 
   /// 执行提取

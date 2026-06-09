@@ -1,10 +1,12 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import '../models/note.dart';
 import '../models/tab_state.dart';
 import '../services/note_storage_service.dart';
 import '../services/image_storage_service.dart';
+import '../utils/delta_to_markdown.dart';
 import '../widgets/rich_text_editor.dart';
 
 /// 首页 - 笔记列表
@@ -397,6 +399,14 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                           const PopupMenuItem(
+                            value: 'copyMarkdown',
+                            child: ListTile(
+                              leading: Icon(Icons.data_object),
+                              title: Text('复制为 Markdown'),
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                          ),
+                          const PopupMenuItem(
                             value: 'delete',
                             child: ListTile(
                               leading: Icon(Icons.delete, color: Colors.red),
@@ -751,6 +761,15 @@ class _HomeScreenState extends State<HomeScreen> {
           if (result.success) _loadNotes();
         }
         break;
+      case 'copyMarkdown':
+        final markdown = deltaToMarkdown(note.content);
+        await Clipboard.setData(ClipboardData(text: markdown));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('已复制为 Markdown')),
+          );
+        }
+        break;
       case 'delete':
         await _deleteNote(note);
         break;
@@ -895,6 +914,15 @@ class _EditorScreenWrapperState extends State<_EditorScreenWrapper> {
             PopupMenuButton<String>(
               onSelected: (action) async {
                 switch (action) {
+                  case 'copyMarkdown':
+                    final markdown = deltaToMarkdown(_currentNote.content);
+                    await Clipboard.setData(ClipboardData(text: markdown));
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('已复制为 Markdown')),
+                      );
+                    }
+                    break;
                   case 'delete':
                     final confirmed = await showDialog<bool>(
                       context: context,
@@ -930,6 +958,14 @@ class _EditorScreenWrapperState extends State<_EditorScreenWrapper> {
                 }
               },
               itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'copyMarkdown',
+                  child: ListTile(
+                    leading: Icon(Icons.data_object),
+                    title: Text('复制为 Markdown'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
                 const PopupMenuItem(
                   value: 'delete',
                   child: ListTile(
