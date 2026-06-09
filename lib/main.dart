@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_quill/flutter_quill.dart';
+import 'package:media_kit/media_kit.dart';
 import 'services/note_storage_service.dart';
 import 'services/clipper/extractor_registry.dart';
 import 'services/clipper/readability_extractor.dart';
@@ -13,6 +14,7 @@ import 'screens/home_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  MediaKit.ensureInitialized();
 
   final storageService = NoteStorageService();
   await storageService.init();

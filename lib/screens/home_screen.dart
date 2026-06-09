@@ -6,6 +6,7 @@ import '../models/note.dart';
 import '../models/tab_state.dart';
 import '../services/note_storage_service.dart';
 import '../services/image_storage_service.dart';
+import '../services/video_storage_service.dart';
 import '../utils/delta_to_markdown.dart';
 import '../widgets/rich_text_editor.dart';
 
@@ -312,7 +313,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final result = await widget.storageService.deleteNote(note.id);
       if (result.success) {
         await ImageStorageService().deleteImagesForNote(note.id);
-        // 关闭对应标签页（不保存，笔记已删除）
+        await VideoStorageService().deleteVideosForNote(note.id);
         if (_tabs.any((t) => t.id == note.id)) {
           _closeTabWithoutSave(note.id);
         }
@@ -949,6 +950,8 @@ class _EditorScreenWrapperState extends State<_EditorScreenWrapper> {
                       if (result.success) {
                         await ImageStorageService()
                             .deleteImagesForNote(_currentNote.id);
+                        await VideoStorageService()
+                            .deleteVideosForNote(_currentNote.id);
                       }
                       if (result.success && mounted) {
                         Navigator.of(context).pop();

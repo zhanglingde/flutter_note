@@ -136,6 +136,19 @@ class WebClipperService {
             delta.insert('\n');
           }
         }
+      case 'video':
+        final src = node.attributes['src'] ?? '';
+        if (src.isNotEmpty) {
+          delta.insert({'video': '{"source":"$src","width":400}'});
+          delta.insert('\n');
+        } else {
+          final source = node.querySelector('source');
+          final sourceSrc = source?.attributes['src'] ?? '';
+          if (sourceSrc.isNotEmpty) {
+            delta.insert({'video': '{"source":"$sourceSrc","width":400}'});
+            delta.insert('\n');
+          }
+        }
       case 'br':
         delta.insert('\n');
       case 'hr':

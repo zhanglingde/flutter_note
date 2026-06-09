@@ -12,11 +12,14 @@ import 'package:highlight/highlight.dart' as highlight;
 import 'package:highlight/languages/all.dart' as languages;
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:dart_quill_delta/dart_quill_delta.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 import 'dart:convert';
 import '../utils/markdown_auto_converter.dart';
 import '../utils/cn_en_formatter.dart';
 import '../utils/delta_to_markdown.dart';
 import '../services/image_storage_service.dart';
+import '../services/video_storage_service.dart';
 import '../services/web_clipper_service.dart';
 import '../services/clipper/extractor_registry.dart';
 import '../services/clipper/webview_extractor_mixin.dart';
@@ -53,6 +56,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
   bool _isInitialized = false;
 
   final ImageStorageService _imageService = ImageStorageService();
+  final VideoStorageService _videoService = VideoStorageService();
 
   /// 代码块语言映射：Block 的第一个 Line 偏移量 -> 语言
   final Map<int, String> _codeBlockLanguages = {};
@@ -289,7 +293,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
     }
   }
 
-  /// 自定义粘贴回调：处理图片粘贴和代码块内纯文本粘贴
+  /// 自定义粘贴回调：处理图片/视频粘贴和代码块内纯文本粘贴
   Future<bool> _onClipboardPaste() async {
     // 1. 检查剪贴板是否有图片
     try {
@@ -309,7 +313,40 @@ class _RichTextEditorState extends State<RichTextEditor> {
       }
     } catch (_) {}
 
-    // 2. 代码块内：只粘贴纯文本（避免 HTML 格式破坏代码块）
+    // 2. 检查剪贴板是否有视频
+    try {
+      final clipboard = SystemClipboard.instance;
+      if (clipboard != null) {
+        final reader = await clipboard.read();
+        final videoFormats = reader.getFormats([
+          Formats.mp4,
+          Formats.webm,
+          Formats.avi,
+          Formats.mkv,
+          Formats.mov,
+          Formats.mpeg,
+        ]);
+        if (videoFormats.isNotEmpty) {
+          final format = videoFormats.first as FileFormat;
+          final extMap = {
+            Formats.mp4: 'mp4',
+            Formats.webm: 'webm',
+            Formats.avi: 'avi',
+            Formats.mkv: 'mkv',
+            Formats.mov: 'mov',
+            Formats.mpeg: 'mpeg',
+          };
+          final ext = extMap[format] ?? 'mp4';
+          final bytes = await _readClipboardFile(reader, format);
+          if (bytes != null) {
+            await _insertVideo(bytes, extension: ext);
+            return true;
+          }
+        }
+      }
+    } catch (_) {}
+
+    // 3. 代码块内：只粘贴纯文本（避免 HTML 格式破坏代码块）
     if (_isCursorInCodeBlock()) {
       final data = await Clipboard.getData(Clipboard.kTextPlain);
       if (data?.text != null && data!.text!.isNotEmpty) {
@@ -325,7 +362,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
       return true;
     }
 
-    // 3. 非代码块：让 Quill 处理（支持富文本粘贴）
+    // 4. 非代码块：让 Quill 处理（支持富文本粘贴）
     return false;
   }
 
@@ -474,6 +511,59 @@ class _RichTextEditorState extends State<RichTextEditor> {
     );
   }
 
+  /// 显示视频插入对话框
+  Future<void> _showVideoDialog() async {
+    final result = await showDialog<_VideoSource>(
+      context: context,
+      builder: (context) => const _VideoInsertDialog(),
+    );
+    if (result == null || !mounted) return;
+
+    if (result.isFile && result.fileBytes != null) {
+      await _insertVideo(result.fileBytes!, extension: result.extension ?? 'mp4');
+    } else if (result.url != null) {
+      _insertVideoUrl(result.url!);
+    }
+  }
+
+  /// 保存视频文件并插入到编辑器
+  Future<void> _insertVideo(Uint8List bytes, {String extension = 'mp4'}) async {
+    final filePath = await _videoService.saveVideo(
+      bytes,
+      widget.noteId,
+      extension: extension,
+    );
+
+    final videoData = jsonEncode({
+      'source': filePath,
+      'width': 400,
+    });
+
+    final index = _controller.selection.baseOffset;
+    _controller.replaceText(
+      index,
+      0,
+      BlockEmbed('video', videoData),
+      null,
+    );
+  }
+
+  /// 插入网络视频 URL
+  void _insertVideoUrl(String url) {
+    final videoData = jsonEncode({
+      'source': url,
+      'width': 400,
+    });
+
+    final index = _controller.selection.baseOffset;
+    _controller.replaceText(
+      index,
+      0,
+      BlockEmbed('video', videoData),
+      null,
+    );
+  }
+
   /// 剪藏网页内容
   Future<void> _clipWebPage() async {
     final url = await showDialog<String>(
@@ -596,6 +686,12 @@ class _RichTextEditorState extends State<RichTextEditor> {
                     icon: const Icon(LucideIcons.imagePlus, size: 20),
                     onPressed: _pickImageFromFile,
                     tooltip: '选择图片',
+                  ),
+                  // 选择视频按钮
+                  IconButton(
+                    icon: const Icon(LucideIcons.video, size: 20),
+                    onPressed: _showVideoDialog,
+                    tooltip: '插入视频',
                   ),
                   _toolbarDivider(),
                   // 网页剪藏按钮
@@ -1153,6 +1249,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
                 customLeadingBlockBuilder: _buildLeadingBlock,
                 embedBuilders: [
                   _ImageEmbedBuilder(controller: _controller),
+                  _VideoEmbedBuilder(controller: _controller),
                 ],
               ),
             ),
@@ -1522,16 +1619,13 @@ class _ResizableImageState extends State<_ResizableImage> {
   }
 
   void _showContextMenu(TapDownDetails details) {
-    final renderBox = context.findRenderObject() as RenderBox;
-    final position = renderBox.localToGlobal(details.globalPosition);
-
     showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(
-        position.dx,
-        position.dy,
-        position.dx + 1,
-        position.dy + 1,
+        details.globalPosition.dx,
+        details.globalPosition.dy,
+        details.globalPosition.dx + 1,
+        details.globalPosition.dy + 1,
       ),
       items: [
         const PopupMenuItem(value: 'copy', child: Text('复制图片')),
@@ -1910,6 +2004,292 @@ class _ImagePreviewOverlayState extends State<_ImagePreviewOverlay> {
           ),
         ),
       ),
+    );
+  }
+}
+
+// ===================== 视频嵌入 =====================
+
+class _VideoEmbedBuilder extends EmbedBuilder {
+  final QuillController controller;
+
+  _VideoEmbedBuilder({required this.controller});
+
+  @override
+  String get key => 'video';
+
+  @override
+  Widget build(BuildContext context, EmbedContext embedContext) {
+    final rawData = embedContext.node.value.data as String;
+
+    String source;
+    try {
+      final json = jsonDecode(rawData) as Map<String, dynamic>;
+      source = json['source'] as String;
+    } catch (_) {
+      source = rawData;
+    }
+
+    return _VideoPlayerWidget(
+      source: source,
+      onDelete: () {
+        final offset = embedContext.node.documentOffset;
+        if (offset >= 0) {
+          controller.replaceText(offset, 1, '', null);
+        }
+      },
+    );
+  }
+}
+
+class _VideoPlayerWidget extends StatefulWidget {
+  final String source;
+  final VoidCallback? onDelete;
+
+  const _VideoPlayerWidget({required this.source, this.onDelete});
+
+  @override
+  State<_VideoPlayerWidget> createState() => _VideoPlayerWidgetState();
+}
+
+class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
+  Player? _player;
+  VideoController? _controller;
+  bool _isInitialized = false;
+  bool _hasError = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initPlayer();
+  }
+
+  void _initPlayer() {
+    if (kIsWeb) return;
+
+    try {
+      _player = Player();
+      _controller = VideoController(_player!);
+      _player!.open(Media(widget.source), play: false);
+      _isInitialized = true;
+    } catch (e) {
+      debugPrint('VideoPlayer init error: $e');
+      _hasError = true;
+    }
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _player?.dispose();
+    super.dispose();
+  }
+
+  void _showContextMenu(TapDownDetails details) {
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        details.globalPosition.dx,
+        details.globalPosition.dy,
+        details.globalPosition.dx + 1,
+        details.globalPosition.dy + 1,
+      ),
+      items: [
+        PopupMenuItem(
+          value: 'delete',
+          child: Text('删除视频', style: TextStyle(color: Theme.of(context).colorScheme.error)),
+        ),
+      ],
+    ).then((value) {
+      if (value == 'delete' && mounted) {
+        widget.onDelete?.call();
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (kIsWeb) {
+      return _buildWebVideo();
+    }
+
+    if (_hasError || !_isInitialized) {
+      return _buildPlaceholder();
+    }
+
+    return Listener(
+      onPointerDown: (event) {
+        if (event.kind == PointerDeviceKind.mouse &&
+            event.buttons == kSecondaryMouseButton) {
+          _showContextMenu(TapDownDetails(
+            globalPosition: event.position,
+            localPosition: event.localPosition,
+          ));
+        }
+      },
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        constraints: const BoxConstraints(maxHeight: 400),
+        child: Video(
+          controller: _controller!,
+          controls: MaterialVideoControls,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWebVideo() {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      height: 300,
+      color: Colors.black,
+      child: Center(
+        child: Text(
+          'Web 平台暂不支持视频播放',
+          style: TextStyle(color: Colors.white54, fontSize: 14),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlaceholder() {
+    return GestureDetector(
+      onSecondaryTapDown: _showContextMenu,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        height: 200,
+        decoration: BoxDecoration(
+          color: Colors.grey[200],
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(LucideIcons.videoOff, size: 32, color: Colors.grey[400]),
+              const SizedBox(height: 8),
+              Text(
+                '视频文件未找到',
+                style: TextStyle(color: Colors.grey[500], fontSize: 14),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ===================== 视频来源数据 =====================
+
+class _VideoSource {
+  final bool isFile;
+  final Uint8List? fileBytes;
+  final String? extension;
+  final String? url;
+
+  const _VideoSource({
+    required this.isFile,
+    this.fileBytes,
+    this.extension,
+    this.url,
+  });
+}
+
+// ===================== 视频插入对话框 =====================
+
+class _VideoInsertDialog extends StatefulWidget {
+  const _VideoInsertDialog();
+
+  @override
+  State<_VideoInsertDialog> createState() => _VideoInsertDialogState();
+}
+
+class _VideoInsertDialogState extends State<_VideoInsertDialog> {
+  int _tabIndex = 0;
+  final _urlController = TextEditingController();
+
+  @override
+  void dispose() {
+    _urlController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('插入视频'),
+      content: SizedBox(
+        width: 400,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                ChoiceChip(
+                  label: const Text('从文件'),
+                  selected: _tabIndex == 0,
+                  onSelected: (_) => setState(() => _tabIndex = 0),
+                ),
+                const SizedBox(width: 8),
+                ChoiceChip(
+                  label: const Text('输入 URL'),
+                  selected: _tabIndex == 1,
+                  onSelected: (_) => setState(() => _tabIndex = 1),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            if (_tabIndex == 0)
+              Text(
+                '点击确定后选择视频文件\n支持 MP4、MOV、AVI、WebM、MKV 格式',
+                style: Theme.of(context).textTheme.bodySmall,
+              )
+            else
+              TextField(
+                controller: _urlController,
+                decoration: const InputDecoration(
+                  labelText: '视频 URL',
+                  hintText: 'https://example.com/video.mp4',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () async {
+            if (_tabIndex == 0) {
+              final result = await FilePicker.platform.pickFiles(
+                type: FileType.custom,
+                allowedExtensions: ['mp4', 'mov', 'avi', 'webm', 'mkv'],
+                allowMultiple: false,
+              );
+              if (result != null && result.files.single.path != null && mounted) {
+                final file = File(result.files.single.path!);
+                final bytes = await file.readAsBytes();
+                final ext = result.files.single.extension ?? 'mp4';
+                if (mounted) {
+                  Navigator.pop(
+                    context,
+                    _VideoSource(isFile: true, fileBytes: bytes, extension: ext),
+                  );
+                }
+              }
+            } else {
+              final url = _urlController.text.trim();
+              if (url.isEmpty) return;
+              Navigator.pop(context, _VideoSource(isFile: false, url: url));
+            }
+          },
+          child: const Text('确定'),
+        ),
+      ],
     );
   }
 }

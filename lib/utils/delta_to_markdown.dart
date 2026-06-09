@@ -33,6 +33,23 @@ String deltaToMarkdown(String deltaJson) {
         }
         currentLine.inlines.add(_Inline('![]($url)', null));
       }
+      if (data.containsKey('video')) {
+        final videoSource = data['video'];
+        String url;
+        if (videoSource is String) {
+          try {
+            final json = jsonDecode(videoSource) as Map<String, dynamic>;
+            url = json['source']?.toString() ?? '';
+          } catch (_) {
+            url = videoSource;
+          }
+        } else if (videoSource is Map) {
+          url = videoSource['source']?.toString() ?? '';
+        } else {
+          url = videoSource.toString();
+        }
+        currentLine.inlines.add(_Inline('![video]($url)', null));
+      }
       continue;
     }
 

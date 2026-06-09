@@ -76,7 +76,13 @@ Delta markdownToDelta(String markdown) {
     // 图片（独占一行）
     final imgMatch = RegExp(r'!\[([^\]]*)\]\(([^)]+)\)').firstMatch(line);
     if (imgMatch != null && line.trim() == imgMatch.group(0)) {
-      delta.insert({'image': imgMatch.group(2)!});
+      final alt = imgMatch.group(1)!;
+      final url = imgMatch.group(2)!;
+      if (alt.toLowerCase() == 'video') {
+        delta.insert({'video': '{"source":"$url","width":400}'});
+      } else {
+        delta.insert({'image': url});
+      }
       delta.insert('\n');
       i++;
       continue;

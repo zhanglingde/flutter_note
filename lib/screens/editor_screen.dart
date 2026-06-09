@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/note.dart';
 import '../services/note_storage_service.dart';
 import '../services/image_storage_service.dart';
+import '../services/video_storage_service.dart';
 import '../widgets/rich_text_editor.dart';
 
 /// 编辑器页面
@@ -123,6 +124,7 @@ class _EditorScreenState extends State<EditorScreen> {
           if (result.success) {
             // 清理笔记关联的图片文件
             await ImageStorageService().deleteImagesForNote(_currentNote.id);
+            await VideoStorageService().deleteVideosForNote(_currentNote.id);
           }
           if (result.success && mounted) {
             Navigator.of(context).pop();
