@@ -15,6 +15,7 @@ import 'package:dart_quill_delta/dart_quill_delta.dart';
 import 'dart:convert';
 import '../utils/markdown_auto_converter.dart';
 import '../utils/cn_en_formatter.dart';
+import '../utils/delta_to_markdown.dart';
 import '../services/image_storage_service.dart';
 import '../services/web_clipper_service.dart';
 import '../services/clipper/extractor_registry.dart';
@@ -81,6 +82,12 @@ class _RichTextEditorState extends State<RichTextEditor> {
   /// 大纲面板宽度
   double _outlineWidth = 240;
 
+  /// 是否显示 Markdown 源码视图
+  bool _isMarkdownView = false;
+
+  /// 当前字数
+  int _charCount = 0;
+
   @override
   void initState() {
     super.initState();
@@ -140,6 +147,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
 
     _controller.addListener(_onContentChanged);
     _isInitialized = true;
+    _charCount = _controller.document.toPlainText().replaceAll('\n', '').length;
 
     _markdownConverter = MarkdownAutoConverter(
       controller: _controller,
@@ -243,6 +251,12 @@ class _RichTextEditorState extends State<RichTextEditor> {
     if (!_isInitialized) return;
 
     _detectMarkdownTrigger();
+
+    final plainText = _controller.document.toPlainText();
+    final newCount = plainText.replaceAll('\n', '').length;
+    if (newCount != _charCount) {
+      _charCount = newCount;
+    }
 
     final json = jsonEncode(_controller.document.toDelta().toJson());
     final docLen = _controller.document.length;
@@ -625,6 +639,77 @@ class _RichTextEditorState extends State<RichTextEditor> {
           ),
           ...widget.actions,
         ],
+      ),
+    );
+  }
+
+  Widget _buildBottomToolbar() {
+    return Container(
+      height: 32,
+      decoration: BoxDecoration(
+        color: const Color(0xFFFAFAFA),
+        border: Border(
+          top: BorderSide(color: Theme.of(context).dividerColor),
+        ),
+      ),
+      child: Row(
+        children: [
+          InkWell(
+            onTap: () => setState(() => _isMarkdownView = !_isMarkdownView),
+            borderRadius: BorderRadius.circular(4),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    _isMarkdownView ? LucideIcons.pencil : LucideIcons.fileCode,
+                    size: 14,
+                    color: Theme.of(context).colorScheme.outline,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    _isMarkdownView ? '编辑' : '源码',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.outline,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const Spacer(),
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Text(
+              '$_charCount 字',
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.outline,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMarkdownView() {
+    final deltaJson = jsonEncode(_controller.document.toDelta().toJson());
+    final markdown = deltaToMarkdown(deltaJson);
+    return Container(
+      color: const Color(0xFFFFFFFF),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 100, vertical: 16),
+        child: SelectableText(
+          markdown,
+          style: const TextStyle(
+            fontFamily: 'Consolas',
+            fontSize: 14,
+            height: 1.6,
+          ),
+        ),
       ),
     );
   }
@@ -1080,30 +1165,33 @@ class _RichTextEditorState extends State<RichTextEditor> {
       children: [
         _buildToolbar(),  // 工具栏
         Expanded(
-          child: _showOutline
-              ? Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(child: editorWidget),   // 编辑区域
-                    _buildDragHandle(),         // 大纲
-                    SizedBox(
-                      width: _outlineWidth.clamp(160.0, 400.0),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          border: Border(
-                            left: BorderSide(color: Theme.of(context).dividerColor),
+          child: _isMarkdownView
+              ? _buildMarkdownView()
+              : _showOutline
+                  ? Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(child: editorWidget),   // 编辑区域
+                        _buildDragHandle(),         // 大纲
+                        SizedBox(
+                          width: _outlineWidth.clamp(160.0, 400.0),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              border: Border(
+                                left: BorderSide(color: Theme.of(context).dividerColor),
+                              ),
+                            ),
+                            child: OutlineSidebar(
+                              controller: _controller,
+                              editorScrollController: _scrollController,
+                            ),
                           ),
                         ),
-                        child: OutlineSidebar(
-                          controller: _controller,
-                          editorScrollController: _scrollController,
-                        ),
-                      ),
-                    ),
-                  ],
-                )
-              : editorWidget,
+                      ],
+                    )
+                  : editorWidget,
         ),
+        _buildBottomToolbar(),
       ],
     );
   }
