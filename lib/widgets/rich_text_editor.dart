@@ -2057,6 +2057,8 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   VideoController? _controller;
   bool _isInitialized = false;
   bool _hasError = false;
+  int? _videoWidth;
+  int? _videoHeight;
 
   @override
   void initState() {
@@ -2070,6 +2072,16 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     try {
       _player = Player();
       _controller = VideoController(_player!);
+      _player!.stream.width.listen((w) {
+        if (w != null && w > 0 && mounted) {
+          setState(() => _videoWidth = w);
+        }
+      });
+      _player!.stream.height.listen((h) {
+        if (h != null && h > 0 && mounted) {
+          setState(() => _videoHeight = h);
+        }
+      });
       _player!.open(Media(widget.source), play: false);
       _isInitialized = true;
     } catch (e) {
@@ -2083,6 +2095,26 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   void dispose() {
     _player?.dispose();
     super.dispose();
+  }
+
+  Widget _buildSizedVideo() {
+    const double maxWidth = 400.0;
+    double displayWidth = maxWidth;
+    double displayHeight = 225.0;
+
+    if (_videoWidth != null && _videoHeight != null && _videoWidth! > 0) {
+      final aspectRatio = _videoWidth! / _videoHeight!;
+      displayHeight = displayWidth / aspectRatio;
+    }
+
+    return SizedBox(
+      width: displayWidth,
+      height: displayHeight,
+      child: Video(
+        controller: _controller!,
+        controls: MaterialVideoControls,
+      ),
+    );
   }
 
   void _showContextMenu(TapDownDetails details) {
@@ -2117,22 +2149,21 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       return _buildPlaceholder();
     }
 
-    return Listener(
-      onPointerDown: (event) {
-        if (event.kind == PointerDeviceKind.mouse &&
-            event.buttons == kSecondaryMouseButton) {
-          _showContextMenu(TapDownDetails(
-            globalPosition: event.position,
-            localPosition: event.localPosition,
-          ));
-        }
-      },
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 8),
-        constraints: const BoxConstraints(maxHeight: 400),
-        child: Video(
-          controller: _controller!,
-          controls: MaterialVideoControls,
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Listener(
+        onPointerDown: (event) {
+          if (event.kind == PointerDeviceKind.mouse &&
+              event.buttons == kSecondaryMouseButton) {
+            _showContextMenu(TapDownDetails(
+              globalPosition: event.position,
+              localPosition: event.localPosition,
+            ));
+          }
+        },
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 8),
+          child: _buildSizedVideo(),
         ),
       ),
     );
