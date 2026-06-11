@@ -546,7 +546,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
     final videoData = jsonEncode({
       'source': filePath,
       'width': 400,
-      if (thumbnail != null) 'thumbnail': thumbnail,
+      'thumbnail': thumbnail,
     });
 
     final index = _controller.selection.baseOffset;
@@ -575,7 +575,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
     final videoData = jsonEncode({
       'source': url,
       'width': 400,
-      if (thumbnail != null) 'thumbnail': thumbnail,
+      'thumbnail': thumbnail,
     });
 
     final index = _controller.selection.baseOffset;
