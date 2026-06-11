@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
@@ -10,6 +11,7 @@ import '../services/note_storage_service.dart';
 import '../services/image_storage_service.dart';
 import '../services/video_storage_service.dart';
 import '../utils/delta_to_markdown.dart';
+import '../utils/media_thumbnail.dart';
 import '../widgets/rich_text_editor.dart';
 
 enum NoteListViewMode { list, waterfall }
@@ -731,6 +733,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final title = _extractTitle(note.content);
     final preview = _getPreview(note.content);
     final isSelected = _tabs.any((t) => t.id == note.id && t.id == _activeTabId);
+    final media = extractFirstMedia(note.content);
 
     return Dismissible(
       key: Key(note.id),
@@ -751,6 +754,7 @@ class _HomeScreenState extends State<HomeScreen> {
             : null,
         child: ListTile(
           selected: isSelected,
+          leading: media != null ? _buildListThumbnail(media) : null,
           title: Text(
             title.isEmpty ? '无标题' : title,
             maxLines: 1,
@@ -786,6 +790,50 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildListThumbnail(MediaInfo media) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(6),
+      child: SizedBox(
+        width: 48,
+        height: 48,
+        child: media.isVideo
+            ? Container(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                child: const Center(
+                  child: Icon(Icons.play_circle_filled, size: 24),
+                ),
+              )
+            : media.isNetwork
+                ? Image.network(media.source, fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const Icon(Icons.broken_image))
+                : Image.file(File(media.source), fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const Icon(Icons.broken_image)),
+      ),
+    );
+  }
+
+  Widget _buildWaterfallThumbnail(MediaInfo media) {
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 120),
+        child: media.isVideo
+            ? Container(
+                height: 80,
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                child: const Center(
+                  child: Icon(Icons.play_circle_filled, size: 36),
+                ),
+              )
+            : media.isNetwork
+                ? Image.network(media.source, fit: BoxFit.cover, width: double.infinity,
+                    errorBuilder: (_, __, ___) => const SizedBox.shrink())
+                : Image.file(File(media.source), fit: BoxFit.cover, width: double.infinity,
+                    errorBuilder: (_, __, ___) => const SizedBox.shrink()),
+      ),
+    );
+  }
+
   Widget _buildWaterfallView(List<Note> notes) {
     return MasonryGridView.builder(
       itemCount: notes.length,
@@ -805,6 +853,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final title = _extractTitle(note.content);
     final preview = _getPreview(note.content);
     final isSelected = _tabs.any((t) => t.id == note.id && t.id == _activeTabId);
+    final media = extractFirstMedia(note.content);
 
     return GestureDetector(
       onTap: () => _openNote(note),
@@ -821,16 +870,22 @@ class _HomeScreenState extends State<HomeScreen> {
                 : Theme.of(context).colorScheme.outlineVariant,
           ),
         ),
-        padding: const EdgeInsets.all(8),
+        clipBehavior: Clip.antiAlias,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              title.isEmpty ? '无标题' : title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-            ),
+            if (media != null) _buildWaterfallThumbnail(media),
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title.isEmpty ? '无标题' : title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
             if (preview.isNotEmpty) ...[
               const SizedBox(height: 4),
               Text(
@@ -870,6 +925,9 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ],
+        ),
+      ),
+    ],
         ),
       ),
     );
