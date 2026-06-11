@@ -47,8 +47,9 @@ class VideoStorageService {
     Player? player;
     try {
       player = Player();
-      player.open(Media(source), play: false);
+      await player.open(Media(source), play: true);
 
+      // 等待视频帧解码（width stream 触发表示元数据已加载）
       final completer = Completer<void>();
       final sub = player.stream.width.listen((w) {
         if (w != null && w > 0 && !completer.isCompleted) {
@@ -57,6 +58,11 @@ class VideoStorageService {
       });
       await completer.future.timeout(const Duration(seconds: 5));
       await sub.cancel();
+
+      // 等待帧渲染后暂停
+      await Future.delayed(const Duration(milliseconds: 300));
+      await player.pause();
+      await player.seek(const Duration(milliseconds: 0));
 
       final jpegBytes = await player.screenshot(format: 'image/jpeg');
       if (jpegBytes == null) return null;
