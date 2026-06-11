@@ -522,7 +522,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
     if (result.isFile && result.fileBytes != null) {
       await _insertVideo(result.fileBytes!, extension: result.extension ?? 'mp4');
     } else if (result.url != null) {
-      _insertVideoUrl(result.url!);
+      await _insertVideoUrl(result.url!);
     }
   }
 
@@ -534,9 +534,19 @@ class _RichTextEditorState extends State<RichTextEditor> {
       extension: extension,
     );
 
+    final fileName = filePath.split('/').last;
+
+    String? thumbnail;
+    try {
+      thumbnail = await _videoService.generateThumbnail(filePath, fileName, widget.noteId);
+    } catch (e) {
+      debugPrint('Failed to generate video thumbnail: $e');
+    }
+
     final videoData = jsonEncode({
       'source': filePath,
       'width': 400,
+      if (thumbnail != null) 'thumbnail': thumbnail,
     });
 
     final index = _controller.selection.baseOffset;
@@ -549,10 +559,23 @@ class _RichTextEditorState extends State<RichTextEditor> {
   }
 
   /// 插入网络视频 URL
-  void _insertVideoUrl(String url) {
+  Future<void> _insertVideoUrl(String url) async {
+    final uri = Uri.tryParse(url);
+    final fileName = uri?.pathSegments.isNotEmpty == true
+        ? uri!.pathSegments.last
+        : DateTime.now().millisecondsSinceEpoch.toString();
+
+    String? thumbnail;
+    try {
+      thumbnail = await _videoService.generateThumbnail(url, fileName, widget.noteId);
+    } catch (e) {
+      debugPrint('Failed to generate network video thumbnail: $e');
+    }
+
     final videoData = jsonEncode({
       'source': url,
       'width': 400,
+      if (thumbnail != null) 'thumbnail': thumbnail,
     });
 
     final index = _controller.selection.baseOffset;
@@ -2023,21 +2046,137 @@ class _VideoEmbedBuilder extends EmbedBuilder {
     final rawData = embedContext.node.value.data as String;
 
     String source;
+    String? thumbnail;
     try {
       final json = jsonDecode(rawData) as Map<String, dynamic>;
       source = json['source'] as String;
+      thumbnail = json['thumbnail'] as String?;
     } catch (_) {
       source = rawData;
     }
 
+    final onDelete = () {
+      final offset = embedContext.node.documentOffset;
+      if (offset >= 0) {
+        controller.replaceText(offset, 1, '', null);
+      }
+    };
+
+    if (thumbnail != null) {
+      return _VideoThumbnailWidget(
+        thumbnailPath: thumbnail,
+        source: source,
+        onDelete: onDelete,
+      );
+    }
+
     return _VideoPlayerWidget(
       source: source,
-      onDelete: () {
-        final offset = embedContext.node.documentOffset;
-        if (offset >= 0) {
-          controller.replaceText(offset, 1, '', null);
-        }
-      },
+      onDelete: onDelete,
+    );
+  }
+}
+
+class _VideoThumbnailWidget extends StatefulWidget {
+  final String thumbnailPath;
+  final String source;
+  final VoidCallback? onDelete;
+
+  const _VideoThumbnailWidget({
+    required this.thumbnailPath,
+    required this.source,
+    this.onDelete,
+  });
+
+  @override
+  State<_VideoThumbnailWidget> createState() => _VideoThumbnailWidgetState();
+}
+
+class _VideoThumbnailWidgetState extends State<_VideoThumbnailWidget> {
+  bool _showPlayer = false;
+
+  void _showContextMenu(TapDownDetails details) {
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        details.globalPosition.dx,
+        details.globalPosition.dy,
+        details.globalPosition.dx + 1,
+        details.globalPosition.dy + 1,
+      ),
+      items: [
+        PopupMenuItem(
+          value: 'delete',
+          child: Text('删除视频', style: TextStyle(color: Theme.of(context).colorScheme.error)),
+        ),
+      ],
+    ).then((value) {
+      if (value == 'delete' && mounted) {
+        widget.onDelete?.call();
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_showPlayer) {
+      return _VideoPlayerWidget(
+        source: widget.source,
+        onDelete: widget.onDelete,
+      );
+    }
+
+    final isNetwork = widget.thumbnailPath.startsWith('http://') ||
+        widget.thumbnailPath.startsWith('https://');
+    final image = isNetwork
+        ? Image.network(widget.thumbnailPath, fit: BoxFit.cover)
+        : Image.file(File(widget.thumbnailPath), fit: BoxFit.cover);
+
+    return GestureDetector(
+      onTap: () => setState(() => _showPlayer = true),
+      child: Listener(
+        onPointerDown: (event) {
+          if (event.kind == PointerDeviceKind.mouse &&
+              event.buttons == kSecondaryMouseButton) {
+            _showContextMenu(TapDownDetails(
+              globalPosition: event.position,
+              localPosition: event.localPosition,
+            ));
+          }
+        },
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 8),
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: Colors.black,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 400, maxHeight: 300),
+                child: AspectRatio(
+                  aspectRatio: 16 / 9,
+                  child: image,
+                ),
+              ),
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.4),
+                  shape: BoxShape.circle,
+                ),
+                padding: const EdgeInsets.all(12),
+                child: const Icon(
+                  Icons.play_arrow,
+                  color: Colors.white,
+                  size: 36,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
