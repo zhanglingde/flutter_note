@@ -3,8 +3,9 @@ import 'dart:convert';
 class MediaInfo {
   final String source;
   final bool isVideo;
+  final String? thumbnail;
 
-  const MediaInfo({required this.source, required this.isVideo});
+  const MediaInfo({required this.source, required this.isVideo, this.thumbnail});
 
   bool get isNetwork =>
       source.startsWith('http://') || source.startsWith('https://');
@@ -33,9 +34,9 @@ MediaInfo? extractFirstMedia(String content) {
       // 检查视频
       final video = insert['video'];
       if (video is String) {
-        final source = _parseSource(video);
-        if (source != null) {
-          return MediaInfo(source: source, isVideo: true);
+        final result = _parseVideoData(video);
+        if (result != null) {
+          return result;
         }
       }
     }
@@ -52,5 +53,23 @@ String? _parseSource(String rawData) {
   } catch (_) {
     // 旧格式：rawData 直接就是路径
     return rawData.isNotEmpty ? rawData : null;
+  }
+}
+
+MediaInfo? _parseVideoData(String rawData) {
+  try {
+    final json = jsonDecode(rawData) as Map<String, dynamic>;
+    final source = json['source'] as String?;
+    if (source == null) return null;
+    return MediaInfo(
+      source: source,
+      isVideo: true,
+      thumbnail: json['thumbnail'] as String?,
+    );
+  } catch (_) {
+    if (rawData.isNotEmpty) {
+      return MediaInfo(source: rawData, isVideo: true);
+    }
+    return null;
   }
 }

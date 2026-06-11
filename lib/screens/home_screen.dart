@@ -791,6 +791,23 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildListThumbnail(MediaInfo media) {
+    if (media.isVideo && media.thumbnail != null) {
+      final isNet = media.thumbnail!.startsWith('http://') ||
+          media.thumbnail!.startsWith('https://');
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: SizedBox(
+          width: 48,
+          height: 48,
+          child: isNet
+              ? Image.network(media.thumbnail!, fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const Icon(Icons.play_circle_filled, size: 24))
+              : Image.file(File(media.thumbnail!), fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const Icon(Icons.play_circle_filled, size: 24)),
+        ),
+      );
+    }
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(6),
       child: SizedBox(
@@ -813,6 +830,35 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildWaterfallThumbnail(MediaInfo media) {
+    if (media.isVideo && media.thumbnail != null) {
+      final isNet = media.thumbnail!.startsWith('http://') ||
+          media.thumbnail!.startsWith('https://');
+      return ClipRRect(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 120),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              isNet
+                  ? Image.network(media.thumbnail!, fit: BoxFit.cover, width: double.infinity,
+                      errorBuilder: (_, __, ___) => const SizedBox.shrink())
+                  : Image.file(File(media.thumbnail!), fit: BoxFit.cover, width: double.infinity,
+                      errorBuilder: (_, __, ___) => const SizedBox.shrink()),
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.3),
+                  shape: BoxShape.circle,
+                ),
+                padding: const EdgeInsets.all(8),
+                child: const Icon(Icons.play_arrow, color: Colors.white, size: 20),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return ClipRRect(
       borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
       child: ConstrainedBox(
