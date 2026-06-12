@@ -1,14 +1,20 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/note.dart';
 import '../models/tab_state.dart';
 import '../services/note_storage_service.dart';
 import '../services/image_storage_service.dart';
 import '../services/video_storage_service.dart';
 import '../utils/delta_to_markdown.dart';
+import '../utils/media_thumbnail.dart';
 import '../widgets/rich_text_editor.dart';
+
+enum NoteListViewMode { list, waterfall }
 
 /// 首页 - 笔记列表
 class HomeScreen extends StatefulWidget {
@@ -24,6 +30,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Note> _notes = [];
   String _searchQuery = '';
   bool _isLoading = true;
+  NoteListViewMode _viewMode = NoteListViewMode.list;
 
   /// 标签页管理
   final List<TabState> _tabs = [];
@@ -34,12 +41,30 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _loadViewMode();
     _loadNotes();
   }
 
   @override
   void dispose() {
     super.dispose();
+  }
+
+  Future<void> _loadViewMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString('note_list_view_mode');
+    if (saved == 'waterfall' && mounted) {
+      setState(() => _viewMode = NoteListViewMode.waterfall);
+    }
+  }
+
+  Future<void> _setViewMode(NoteListViewMode mode) async {
+    setState(() => _viewMode = mode);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'note_list_view_mode',
+      mode == NoteListViewMode.waterfall ? 'waterfall' : 'list',
+    );
   }
 
   Future<void> _loadNotes() async {
@@ -586,6 +611,44 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           AppBar(
             title: const Text('笔记'),
+            leading: PopupMenuButton<NoteListViewMode>(
+              icon: Icon(
+                _viewMode == NoteListViewMode.list
+                    ? Icons.view_list
+                    : Icons.grid_view,
+              ),
+              onSelected: _setViewMode,
+              itemBuilder: (context) => [
+                PopupMenuItem(
+                  value: NoteListViewMode.list,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.view_list, size: 18),
+                      const SizedBox(width: 8),
+                      const Text('列表视图'),
+                      if (_viewMode == NoteListViewMode.list) ...[
+                        const Spacer(),
+                        const Icon(Icons.check, size: 18),
+                      ],
+                    ],
+                  ),
+                ),
+                PopupMenuItem(
+                  value: NoteListViewMode.waterfall,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.grid_view, size: 18),
+                      const SizedBox(width: 8),
+                      const Text('瀑布流视图'),
+                      if (_viewMode == NoteListViewMode.waterfall) ...[
+                        const Spacer(),
+                        const Icon(Icons.check, size: 18),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
             automaticallyImplyLeading: false,
             actions: [
               IconButton(
@@ -645,6 +708,13 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
+    if (_viewMode == NoteListViewMode.waterfall) {
+      return RefreshIndicator(
+        onRefresh: _loadNotes,
+        child: _buildWaterfallView(notes),
+      );
+    }
+
     return RefreshIndicator(
       onRefresh: _loadNotes,
       child: ListView.builder(
@@ -663,6 +733,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final title = _extractTitle(note.content);
     final preview = _getPreview(note.content);
     final isSelected = _tabs.any((t) => t.id == note.id && t.id == _activeTabId);
+    final media = extractFirstMedia(note.content);
 
     return Dismissible(
       key: Key(note.id),
@@ -683,6 +754,7 @@ class _HomeScreenState extends State<HomeScreen> {
             : null,
         child: ListTile(
           selected: isSelected,
+          leading: media != null ? _buildListThumbnail(media) : null,
           title: Text(
             title.isEmpty ? '无标题' : title,
             maxLines: 1,
@@ -713,6 +785,149 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: const Icon(Icons.delete_outline),
             onPressed: () => _deleteNote(note),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildListThumbnail(MediaInfo media) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(6),
+      child: SizedBox(
+        width: 48,
+        height: 48,
+        child: media.isVideo
+            ? Container(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                child: const Center(
+                  child: Icon(Icons.play_circle_filled, size: 24),
+                ),
+              )
+            : media.isNetwork
+                ? Image.network(media.source, fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const Icon(Icons.broken_image))
+                : Image.file(File(media.source), fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const Icon(Icons.broken_image)),
+      ),
+    );
+  }
+
+  Widget _buildWaterfallThumbnail(MediaInfo media) {
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 120),
+        child: media.isVideo
+            ? Container(
+                height: 80,
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                child: const Center(
+                  child: Icon(Icons.play_circle_filled, size: 36),
+                ),
+              )
+            : media.isNetwork
+                ? Image.network(media.source, fit: BoxFit.cover, width: double.infinity,
+                    errorBuilder: (_, __, ___) => const SizedBox.shrink())
+                : Image.file(File(media.source), fit: BoxFit.cover, width: double.infinity,
+                    errorBuilder: (_, __, ___) => const SizedBox.shrink()),
+      ),
+    );
+  }
+
+  Widget _buildWaterfallView(List<Note> notes) {
+    return MasonryGridView.builder(
+      itemCount: notes.length,
+      crossAxisSpacing: 6,
+      mainAxisSpacing: 6,
+      gridDelegate: const SliverSimpleGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+      ),
+      padding: const EdgeInsets.all(8),
+      itemBuilder: (context, index) {
+        return _buildWaterfallCard(notes[index]);
+      },
+    );
+  }
+
+  Widget _buildWaterfallCard(Note note) {
+    final title = _extractTitle(note.content);
+    final preview = _getPreview(note.content);
+    final isSelected = _tabs.any((t) => t.id == note.id && t.id == _activeTabId);
+    final media = extractFirstMedia(note.content);
+
+    return GestureDetector(
+      onTap: () => _openNote(note),
+      onSecondaryTap: () => _deleteNote(note),
+      child: Container(
+        decoration: BoxDecoration(
+          color: isSelected
+              ? Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3)
+              : Theme.of(context).colorScheme.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected
+                ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.3)
+                : Theme.of(context).colorScheme.outlineVariant,
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (media != null) _buildWaterfallThumbnail(media),
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title.isEmpty ? '无标题' : title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
+            if (preview.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                preview,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontSize: 11,
+                    ),
+              ),
+            ],
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _formatDate(note.updatedAt),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontSize: 10,
+                          color: Theme.of(context).colorScheme.outline,
+                        ),
+                  ),
+                ),
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: IconButton(
+                    icon: Icon(
+                      Icons.delete_outline,
+                      size: 14,
+                      color: Theme.of(context).colorScheme.outline,
+                    ),
+                    padding: EdgeInsets.zero,
+                    onPressed: () => _deleteNote(note),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ],
         ),
       ),
     );
@@ -787,10 +1002,22 @@ class _HomeScreenState extends State<HomeScreen> {
           buffer.write(op['insert']);
         }
       }
-      final text = buffer.toString().replaceAll('\n', ' ').trim();
-      return text.isEmpty
-          ? '富文本内容'
-          : (text.length > 100 ? '${text.substring(0, 100)}...' : text);
+      final lines = buffer.toString().split('\n');
+      // 跳过第一段（标题已显示），从第二段开始
+      int start = 0;
+      bool foundFirst = false;
+      for (int i = 0; i < lines.length; i++) {
+        if (lines[i].trim().isNotEmpty) {
+          if (!foundFirst) {
+            foundFirst = true;
+            start = i + 1;
+          }
+        }
+      }
+      final remaining = lines.sublist(start).join(' ').trim();
+      return remaining.isEmpty
+          ? ''
+          : (remaining.length > 100 ? '${remaining.substring(0, 100)}...' : remaining);
     } catch (e) {
       return content.length > 100
           ? '${content.substring(0, 100)}...'
