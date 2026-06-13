@@ -1,4 +1,4 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: 视频嵌入 Delta 格式
 视频 SHALL 以 `BlockEmbed('video', jsonData)` 格式嵌入 Quill Delta，其中 jsonData 为 JSON 字符串。JSON SHALL 包含 `source`（路径或 URL）、`width`（宽度）和可选的 `thumbnail`（缩略图文件绝对路径）字段。格式：`{"source": "路径或URL", "width": 400, "thumbnail": "缩略图路径"}`。
@@ -45,47 +45,3 @@
 #### Scenario: 视频文件不存在
 - **WHEN** 本地视频文件路径无效或文件已被删除
 - **THEN** 显示"视频文件未找到"的占位符
-
-### Requirement: 视频文件存储服务
-系统 SHALL 提供 `VideoStorageService`，将视频文件保存到 `{应用文档目录}/videos/{noteId}/{时间戳}.{扩展名}` 路径下。SHALL 提供保存、删除单文件、删除笔记全部关联视频的方法。
-
-#### Scenario: 保存视频文件
-- **WHEN** 用户插入一个本地视频文件（字节流）
-- **THEN** 文件被保存到 `videos/{noteId}/` 目录，返回完整文件路径
-
-#### Scenario: 删除笔记关联视频
-- **WHEN** 笔记被删除
-- **THEN** `videos/{noteId}/` 目录下所有视频文件被清理
-
-### Requirement: 工具栏视频插入按钮
-底部工具栏 SHALL 包含视频插入按钮（视频图标），点击后弹出对话框提供"从文件选择"和"输入 URL"两种方式。文件选择 SHALL 使用 `FilePicker.platform.pickFiles(allowedExtension: 视频格式)`。
-
-#### Scenario: 从文件选择视频
-- **WHEN** 用户点击视频按钮并选择"从文件"
-- **THEN** 弹出文件选择器，过滤视频格式（mp4/mov/avi/webm/mkv），选择后插入视频
-
-#### Scenario: 通过 URL 插入视频
-- **WHEN** 用户点击视频按钮并选择"输入 URL"
-- **THEN** 弹出 URL 输入框，用户输入视频链接后插入视频
-
-### Requirement: HTML 剪藏支持 video 标签
-`WebClipperService.convertHtmlToDelta` SHALL 处理 HTML `<video>` 标签，提取 `src` 属性或子 `<source>` 标签的视频 URL，生成视频 embed 节点。
-
-#### Scenario: 提取 video 标签 src
-- **WHEN** HTML 中包含 `<video src="https://example.com/video.mp4">`
-- **THEN** 在 Delta 中插入视频 embed，source 为视频 URL
-
-#### Scenario: 提取 source 子标签
-- **WHEN** HTML 中包含 `<video><source src="video.mp4" type="video/mp4"></video>`
-- **THEN** 使用第一个 source 标签的 src 作为视频 URL
-
-### Requirement: Markdown 双向转换支持视频
-Delta 转 Markdown SHALL 将视频 embed 输出为 `![video](source)` 格式。Markdown 转 Delta SHALL 识别 `![video](url)` 模式并转为视频 embed（与图片 `![alt](url)` 区分通过 alt 文本包含 "video" 关键字）。
-
-#### Scenario: Delta 转视频 Markdown
-- **WHEN** Delta 中包含视频 embed（source 为 URL）
-- **THEN** 输出 Markdown `![video](URL)`
-
-#### Scenario: Markdown 视频转 Delta
-- **WHEN** Markdown 中包含 `![video](https://example.com/video.mp4)`
-- **THEN** 转为视频 embed `BlockEmbed('video', ...)`

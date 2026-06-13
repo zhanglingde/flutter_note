@@ -534,10 +534,21 @@ class _RichTextEditorState extends State<RichTextEditor> {
       extension: extension,
     );
 
-    final videoData = jsonEncode({
+    // 尝试生成缩略图，失败不阻塞插入
+    final thumbnail = await _videoService.generateThumbnail(
+      filePath,
+      widget.noteId,
+    );
+
+    final data = <String, dynamic>{
       'source': filePath,
       'width': 400,
-    });
+    };
+    if (thumbnail != null) {
+      data['thumbnail'] = thumbnail;
+    }
+
+    final videoData = jsonEncode(data);
 
     final index = _controller.selection.baseOffset;
     _controller.replaceText(
@@ -2023,21 +2034,156 @@ class _VideoEmbedBuilder extends EmbedBuilder {
     final rawData = embedContext.node.value.data as String;
 
     String source;
+    String? thumbnail;
     try {
       final json = jsonDecode(rawData) as Map<String, dynamic>;
       source = json['source'] as String;
+      thumbnail = json['thumbnail'] as String?;
     } catch (_) {
       source = rawData;
     }
 
+    VoidCallback onDelete = () {
+      final offset = embedContext.node.documentOffset;
+      if (offset >= 0) {
+        controller.replaceText(offset, 1, '', null);
+      }
+    };
+
+    if (thumbnail != null && !kIsWeb) {
+      return _VideoThumbnailWidget(
+        thumbnailPath: thumbnail,
+        source: source,
+        onDelete: onDelete,
+      );
+    }
+
     return _VideoPlayerWidget(
       source: source,
-      onDelete: () {
-        final offset = embedContext.node.documentOffset;
-        if (offset >= 0) {
-          controller.replaceText(offset, 1, '', null);
-        }
-      },
+      onDelete: onDelete,
+    );
+  }
+}
+
+/// 缩略图显示 Widget：显示静态图片+播放按钮，点击后切换到播放器
+class _VideoThumbnailWidget extends StatefulWidget {
+  final String thumbnailPath;
+  final String source;
+  final VoidCallback? onDelete;
+
+  const _VideoThumbnailWidget({
+    required this.thumbnailPath,
+    required this.source,
+    this.onDelete,
+  });
+
+  @override
+  State<_VideoThumbnailWidget> createState() => _VideoThumbnailWidgetState();
+}
+
+class _VideoThumbnailWidgetState extends State<_VideoThumbnailWidget> {
+  bool _showPlayer = false;
+  bool _thumbnailExists = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _thumbnailExists = File(widget.thumbnailPath).existsSync();
+  }
+
+  void _showContextMenu(TapDownDetails details) {
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        details.globalPosition.dx,
+        details.globalPosition.dy,
+        details.globalPosition.dx + 1,
+        details.globalPosition.dy + 1,
+      ),
+      items: [
+        PopupMenuItem(
+          value: 'delete',
+          child: Text('删除视频', style: TextStyle(color: Theme.of(context).colorScheme.error)),
+        ),
+      ],
+    ).then((value) {
+      if (value == 'delete' && mounted) {
+        widget.onDelete?.call();
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_thumbnailExists) {
+      return _VideoPlayerWidget(
+        source: widget.source,
+        onDelete: widget.onDelete,
+      );
+    }
+
+    if (_showPlayer) {
+      return _VideoPlayerWidget(
+        source: widget.source,
+        onDelete: widget.onDelete,
+        onDismissed: () {
+          if (mounted) setState(() => _showPlayer = false);
+        },
+      );
+    }
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Listener(
+        onPointerDown: (event) {
+          if (event.kind == PointerDeviceKind.mouse &&
+              event.buttons == kSecondaryMouseButton) {
+            _showContextMenu(TapDownDetails(
+              globalPosition: event.position,
+              localPosition: event.localPosition,
+            ));
+          }
+        },
+        child: GestureDetector(
+          onTap: () => setState(() => _showPlayer = true),
+          child: Container(
+            margin: const EdgeInsets.symmetric(vertical: 8),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Image.file(
+                  File(widget.thumbnailPath),
+                  width: 400,
+                  fit: BoxFit.fitWidth,
+                  errorBuilder: (_, __, ___) {
+                    // 缩略图加载失败，回退到播放器模式
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) setState(() => _thumbnailExists = false);
+                    });
+                    return const SizedBox(
+                      width: 400,
+                      height: 225,
+                      child: Center(child: CircularProgressIndicator()),
+                    );
+                  },
+                ),
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.4),
+                    shape: BoxShape.circle,
+                  ),
+                  padding: const EdgeInsets.all(12),
+                  child: const Icon(
+                    Icons.play_arrow,
+                    color: Colors.white,
+                    size: 32,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -2045,8 +2191,9 @@ class _VideoEmbedBuilder extends EmbedBuilder {
 class _VideoPlayerWidget extends StatefulWidget {
   final String source;
   final VoidCallback? onDelete;
+  final VoidCallback? onDismissed;
 
-  const _VideoPlayerWidget({required this.source, this.onDelete});
+  const _VideoPlayerWidget({required this.source, this.onDelete, this.onDismissed});
 
   @override
   State<_VideoPlayerWidget> createState() => _VideoPlayerWidgetState();

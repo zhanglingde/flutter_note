@@ -797,12 +797,23 @@ class _HomeScreenState extends State<HomeScreen> {
         width: 48,
         height: 48,
         child: media.isVideo
-            ? Container(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                child: const Center(
-                  child: Icon(Icons.play_circle_filled, size: 24),
-                ),
-              )
+            ? (media.thumbnail != null
+                ? Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Image.file(File(media.thumbnail!), fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                              child: const Center(child: Icon(Icons.play_circle_filled, size: 24)))),
+                      const Center(child: Icon(Icons.play_circle_filled, size: 24, color: Colors.white70)),
+                    ],
+                  )
+                : Container(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    child: const Center(
+                      child: Icon(Icons.play_circle_filled, size: 24),
+                    ),
+                  ))
             : media.isNetwork
                 ? Image.network(media.source, fit: BoxFit.cover,
                     errorBuilder: (_, __, ___) => const Icon(Icons.broken_image))
@@ -818,13 +829,27 @@ class _HomeScreenState extends State<HomeScreen> {
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxHeight: 120),
         child: media.isVideo
-            ? Container(
-                height: 80,
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                child: const Center(
-                  child: Icon(Icons.play_circle_filled, size: 36),
-                ),
-              )
+            ? (media.thumbnail != null
+                ? Stack(
+                    fit: StackFit.passthrough,
+                    children: [
+                      Image.file(File(media.thumbnail!), fit: BoxFit.cover, width: double.infinity,
+                          errorBuilder: (_, __, ___) => Container(
+                              height: 80,
+                              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                              child: const Center(child: Icon(Icons.play_circle_filled, size: 36)))),
+                      Positioned.fill(
+                        child: Center(child: Icon(Icons.play_circle_filled, size: 36, color: Colors.white70)),
+                      ),
+                    ],
+                  )
+                : Container(
+                    height: 80,
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    child: const Center(
+                      child: Icon(Icons.play_circle_filled, size: 36),
+                    ),
+                  ))
             : media.isNetwork
                 ? Image.network(media.source, fit: BoxFit.cover, width: double.infinity,
                     errorBuilder: (_, __, ___) => const SizedBox.shrink())

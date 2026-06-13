@@ -1,7 +1,7 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: Extract first media source from note content
-The system SHALL parse a note's delta JSON content and extract the source path and optional thumbnail path of the first embedded image or video. `MediaInfo` SHALL 包含 `source`、`isVideo`、`thumbnail` 字段。提取 SHALL 返回 `MediaInfo` 对象。
+The system SHALL parse a note's delta JSON content and extract the source path and optional thumbnail path of the first embedded image or video. `MediaInfo` SHALL 新增 `thumbnail` 字段（String?）。提取 SHALL 返回包含 `source`、`isVideo`、`thumbnail` 的 `MediaInfo` 对象。
 
 #### Scenario: Extract first image source
 - **WHEN** a note contains delta ops including `{"insert": {"image": "{\"source\":\"/path/to/img.png\",\"width\":400}"}}`
