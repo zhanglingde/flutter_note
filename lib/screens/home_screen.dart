@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' show min, max;
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
@@ -31,6 +32,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String _searchQuery = '';
   bool _isLoading = true;
   NoteListViewMode _viewMode = NoteListViewMode.list;
+  double _sidebarWidth = 320;
 
   /// 标签页管理
   final List<TabState> _tabs = [];
@@ -368,13 +370,13 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       body: Row(
         children: [
-          // 左侧：笔记列表面板
+          // 左侧：笔记列表面板（宽度可拖动）
           SizedBox(
-            width: 320,
+            width: _sidebarWidth,
             child: _buildNoteListPanel(),
           ),
-          // 分割线
-          const VerticalDivider(width: 1),
+          // 可拖动分隔线
+          _buildSidebarResizer(),
           // 右侧：标签栏 + 编辑器面板
           Expanded(
             child: _tabs.isEmpty
@@ -386,6 +388,26 @@ class _HomeScreenState extends State<HomeScreen> {
       floatingActionButton: FloatingActionButton(
         onPressed: _createNote,
         child: const Icon(Icons.add),
+      ),
+    );
+  }
+
+  /// 侧边栏可拖动分隔线
+  Widget _buildSidebarResizer() {
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragUpdate: (details) {
+          setState(() {
+            _sidebarWidth =
+                (_sidebarWidth + details.delta.dx).clamp(200.0, 500.0);
+          });
+        },
+        child: Container(
+          width: 6,
+          color: Theme.of(context).dividerColor,
+        ),
       ),
     );
   }
@@ -860,16 +882,26 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildWaterfallView(List<Note> notes) {
-    return MasonryGridView.builder(
-      itemCount: notes.length,
-      crossAxisSpacing: 6,
-      mainAxisSpacing: 6,
-      gridDelegate: const SliverSimpleGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-      ),
-      padding: const EdgeInsets.all(8),
-      itemBuilder: (context, index) {
-        return _buildWaterfallCard(notes[index]);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // 根据面板宽度动态计算列数：1-3 列
+        // 每列按 150px 阈值计算，最窄 1 列，最宽 3 列
+        final crossAxisCount = min(
+          3,
+          max(1, (constraints.maxWidth / 150).floor()),
+        );
+        return MasonryGridView.builder(
+          itemCount: notes.length,
+          crossAxisSpacing: 6,
+          mainAxisSpacing: 6,
+          gridDelegate: SliverSimpleGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+          ),
+          padding: const EdgeInsets.all(8),
+          itemBuilder: (context, index) {
+            return _buildWaterfallCard(notes[index]);
+          },
+        );
       },
     );
   }
