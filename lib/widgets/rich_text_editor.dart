@@ -1249,17 +1249,89 @@ class _RichTextEditorState extends State<RichTextEditor> {
       child: LayoutBuilder(builder: (context, boxConstraints) {
         _editorContentWidth = boxConstraints.maxWidth - _editorHorizontalPadding * 2;
         final defaultStyles = DefaultStyles.getInstance(context);
+        const paragraphSpacing = VerticalSpacing(0, 18);
         return QuillStyles(
             data: defaultStyles.merge(DefaultStyles(
+              paragraph: DefaultTextBlockStyle(
+                defaultStyles.paragraph!.style,
+                defaultStyles.paragraph!.horizontalSpacing,
+                paragraphSpacing,
+                defaultStyles.paragraph!.lineSpacing,
+                defaultStyles.paragraph!.decoration,
+              ),
+              h1: DefaultTextBlockStyle(
+                defaultStyles.h1!.style,
+                defaultStyles.h1!.horizontalSpacing,
+                paragraphSpacing,
+                defaultStyles.h1!.lineSpacing,
+                defaultStyles.h1!.decoration,
+              ),
+              h2: DefaultTextBlockStyle(
+                defaultStyles.h2!.style,
+                defaultStyles.h2!.horizontalSpacing,
+                paragraphSpacing,
+                defaultStyles.h2!.lineSpacing,
+                defaultStyles.h2!.decoration,
+              ),
+              h3: DefaultTextBlockStyle(
+                defaultStyles.h3!.style,
+                defaultStyles.h3!.horizontalSpacing,
+                paragraphSpacing,
+                defaultStyles.h3!.lineSpacing,
+                defaultStyles.h3!.decoration,
+              ),
+              h4: DefaultTextBlockStyle(
+                defaultStyles.h4!.style,
+                defaultStyles.h4!.horizontalSpacing,
+                paragraphSpacing,
+                defaultStyles.h4!.lineSpacing,
+                defaultStyles.h4!.decoration,
+              ),
+              h5: DefaultTextBlockStyle(
+                defaultStyles.h5!.style,
+                defaultStyles.h5!.horizontalSpacing,
+                paragraphSpacing,
+                defaultStyles.h5!.lineSpacing,
+                defaultStyles.h5!.decoration,
+              ),
+              h6: DefaultTextBlockStyle(
+                defaultStyles.h6!.style,
+                defaultStyles.h6!.horizontalSpacing,
+                paragraphSpacing,
+                defaultStyles.h6!.lineSpacing,
+                defaultStyles.h6!.decoration,
+              ),
+              lists: DefaultListBlockStyle(
+                defaultStyles.lists!.style,
+                defaultStyles.lists!.horizontalSpacing,
+                paragraphSpacing,
+                defaultStyles.lists!.lineSpacing,
+                defaultStyles.lists!.decoration,
+                defaultStyles.lists!.checkboxUIBuilder,
+              ),
+              quote: DefaultTextBlockStyle(
+                defaultStyles.quote!.style,
+                defaultStyles.quote!.horizontalSpacing,
+                paragraphSpacing,
+                defaultStyles.quote!.lineSpacing,
+                defaultStyles.quote!.decoration,
+              ),
               code: DefaultTextBlockStyle(
                 defaultStyles.code!.style,
                 defaultStyles.code!.horizontalSpacing,
-                defaultStyles.code!.verticalSpacing,
+                paragraphSpacing,
                 defaultStyles.code!.lineSpacing,
                 const BoxDecoration(
                   color: Color(0xFFEDEDED),
                   borderRadius: BorderRadius.all(Radius.circular(2)),
                 ),
+              ),
+              indent: DefaultTextBlockStyle(
+                defaultStyles.indent!.style,
+                defaultStyles.indent!.horizontalSpacing,
+                paragraphSpacing,
+                defaultStyles.indent!.lineSpacing,
+                defaultStyles.indent!.decoration,
               ),
             )),
             child: QuillEditor(
