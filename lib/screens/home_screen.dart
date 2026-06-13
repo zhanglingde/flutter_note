@@ -38,6 +38,9 @@ class _HomeScreenState extends State<HomeScreen> {
   final List<TabState> _tabs = [];
   String? _activeTabId;
 
+  /// _openTab 重入锁：避免 await 期间多次点击导致的竞态条件
+  bool _isOpeningTab = false;
+
   static const int _maxTabs = 20;
 
   @override
@@ -98,8 +101,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ==================== 标签页管理 ====================
 
-  /// 打开笔记（如果已打开则切换，否则新建标签页）
-  void _openTab(Note note) {
+  /// 打开笔记：
+  /// - 已打开 -> 切换到该标签页
+  /// - 未打开但有活动标签页 -> 替换活动标签页内容（先保存原内容）
+  /// - 无标签页 -> 新建第一个标签页
+  Future<void> _openTab(Note note) async {
+    // 重入保护：上一次打开未完成时丢弃后续点击
+    if (_isOpeningTab) return;
+
     final existingIndex = _tabs.indexWhere((t) => t.id == note.id);
     if (existingIndex >= 0) {
       // 已打开 -> 切换并更新访问时间
@@ -108,16 +117,45 @@ class _HomeScreenState extends State<HomeScreen> {
         _tabs[existingIndex] = _tabs[existingIndex]
             .copyWith(lastAccessedAt: DateTime.now());
       });
-    } else {
-      // 未打开 -> 新建标签页
-      if (_tabs.length >= _maxTabs) {
-        _evictOldestTab();
+      return;
+    }
+
+    if (_activeTabId == null) {
+      // 无标签页 -> 新建第一个标签页
+      _addNewTab(note);
+      return;
+    }
+
+    // 未打开但有活动标签页 -> 替换当前标签页内容
+    _isOpeningTab = true;
+    try {
+      await widget.storageService.flushAutoSave();
+      if (!mounted) return;
+      // await 后重新校验：活动标签页可能已被关闭
+      final activeIndex = _tabs.indexWhere((t) => t.id == _activeTabId);
+      if (activeIndex < 0) {
+        _addNewTab(note);
+        return;
       }
       setState(() {
-        _tabs.add(TabState(note: note, key: GlobalKey()));
+        _tabs[activeIndex] = _tabs[activeIndex]
+            .copyWith(note: note, lastAccessedAt: DateTime.now());
         _activeTabId = note.id;
       });
+    } finally {
+      _isOpeningTab = false;
     }
+  }
+
+  /// 新建标签页（不检查是否已存在，直接添加）
+  void _addNewTab(Note note) {
+    if (_tabs.length >= _maxTabs) {
+      _evictOldestTab();
+    }
+    setState(() {
+      _tabs.add(TabState(note: note, key: GlobalKey()));
+      _activeTabId = note.id;
+    });
   }
 
   /// 关闭标签页
@@ -244,7 +282,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final isDesktop = MediaQuery.of(context).size.width > 768;
       if (isDesktop) {
         _loadNotes();
-        _openTab(note);
+        _addNewTab(note);
       } else {
         await Navigator.push(
           context,
@@ -267,7 +305,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _openNote(Note note) async {
     final isDesktop = MediaQuery.of(context).size.width > 768;
     if (isDesktop) {
-      _openTab(note);
+      await _openTab(note);
     } else {
       await Navigator.push(
         context,
@@ -289,6 +327,72 @@ class _HomeScreenState extends State<HomeScreen> {
         _notes[index] = updated;
         _notes.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       });
+    }
+  }
+
+  /// 执行删除（无确认对话框）—— 供右键菜单和 _deleteNote 共用
+  Future<void> _performDeleteNote(Note note) async {
+    final result = await widget.storageService.deleteNote(note.id);
+    if (result.success) {
+      await ImageStorageService().deleteImagesForNote(note.id);
+      await VideoStorageService().deleteVideosForNote(note.id);
+      if (_tabs.any((t) => t.id == note.id)) {
+        _closeTabWithoutSave(note.id);
+      }
+      _loadNotes();
+    } else if (mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(result.error ?? '删除笔记失败')));
+    }
+  }
+
+  /// 笔记卡片右键/长按菜单
+  ///
+  /// [includeOpenInNewTab] 为 true 时显示「在新标签页打开」项（桌面端）；
+  /// 为 false 时只显示「删除」（移动端）。
+  void _showNoteContextMenu({
+    required Note note,
+    required Offset position,
+    required bool includeOpenInNewTab,
+  }) async {
+    final action = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        position.dx,
+        position.dy,
+      ),
+      items: [
+        if (includeOpenInNewTab)
+          const PopupMenuItem(
+            value: 'openInNewTab',
+            child: ListTile(
+              leading: Icon(Icons.tab),
+              title: Text('在新标签页打开'),
+              contentPadding: EdgeInsets.zero,
+            ),
+          ),
+        const PopupMenuItem(
+          value: 'delete',
+          child: ListTile(
+            leading: Icon(Icons.delete, color: Colors.red),
+            title: Text('删除', style: TextStyle(color: Colors.red)),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+      ],
+    );
+
+    if (!mounted) return;
+    switch (action) {
+      case 'openInNewTab':
+        _addNewTab(note);
+        break;
+      case 'delete':
+        _performDeleteNote(note);
+        break;
     }
   }
 
@@ -337,19 +441,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     if (confirmed == true) {
-      final result = await widget.storageService.deleteNote(note.id);
-      if (result.success) {
-        await ImageStorageService().deleteImagesForNote(note.id);
-        await VideoStorageService().deleteVideosForNote(note.id);
-        if (_tabs.any((t) => t.id == note.id)) {
-          _closeTabWithoutSave(note.id);
-        }
-        _loadNotes();
-      } else if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(result.error ?? '删除笔记失败')));
-      }
+      await _performDeleteNote(note);
     }
   }
 
@@ -752,22 +844,38 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildNoteCard(Note note) {
+    final isDesktop = MediaQuery.of(context).size.width > 768;
     final title = _extractTitle(note.content);
     final preview = _getPreview(note.content);
     final isSelected = _tabs.any((t) => t.id == note.id && t.id == _activeTabId);
     final media = extractFirstMedia(note.content);
 
-    return Dismissible(
-      key: Key(note.id),
-      direction: DismissDirection.endToStart,
-      background: Container(
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 16),
-        color: Theme.of(context).colorScheme.error,
-        child: const Icon(Icons.delete, color: Colors.white),
-      ),
-      onDismissed: (_) => _deleteNote(note),
-      child: Container(
+    return GestureDetector(
+      onSecondaryTapDown: isDesktop
+          ? (details) => _showNoteContextMenu(
+                note: note,
+                position: details.globalPosition,
+                includeOpenInNewTab: true,
+              )
+          : null,
+      onLongPressEnd: !isDesktop
+          ? (details) => _showNoteContextMenu(
+                note: note,
+                position: details.globalPosition,
+                includeOpenInNewTab: false,
+              )
+          : null,
+      child: Dismissible(
+        key: Key(note.id),
+        direction: DismissDirection.endToStart,
+        background: Container(
+          alignment: Alignment.centerRight,
+          padding: const EdgeInsets.only(right: 16),
+          color: Theme.of(context).colorScheme.error,
+          child: const Icon(Icons.delete, color: Colors.white),
+        ),
+        onDismissed: (_) => _deleteNote(note),
+        child: Container(
         color: isSelected
             ? Theme.of(context)
                 .colorScheme
@@ -808,6 +916,7 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: () => _deleteNote(note),
           ),
         ),
+      ),
       ),
     );
   }
@@ -907,6 +1016,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildWaterfallCard(Note note) {
+    final isDesktop = MediaQuery.of(context).size.width > 768;
     final title = _extractTitle(note.content);
     final preview = _getPreview(note.content);
     final isSelected = _tabs.any((t) => t.id == note.id && t.id == _activeTabId);
@@ -914,7 +1024,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return GestureDetector(
       onTap: () => _openNote(note),
-      onSecondaryTap: () => _deleteNote(note),
+      onSecondaryTapDown: isDesktop
+          ? (details) => _showNoteContextMenu(
+                note: note,
+                position: details.globalPosition,
+                includeOpenInNewTab: true,
+              )
+          : null,
+      onLongPressEnd: !isDesktop
+          ? (details) => _showNoteContextMenu(
+                note: note,
+                position: details.globalPosition,
+                includeOpenInNewTab: false,
+              )
+          : null,
       child: Container(
         decoration: BoxDecoration(
           color: isSelected

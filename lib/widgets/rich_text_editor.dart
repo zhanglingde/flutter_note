@@ -650,6 +650,20 @@ class _RichTextEditorState extends State<RichTextEditor> {
   @override
   void didUpdateWidget(RichTextEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // 标签页原地替换笔记时，noteId 变化需要重新加载内容
+    if (oldWidget.noteId != widget.noteId) {
+      _reloadForNoteSwitch();
+    }
+  }
+
+  /// 笔记切换时重新加载内容到编辑器
+  void _reloadForNoteSwitch() {
+    _autoScrollTimer?.cancel();
+    _controller.removeListener(_onContentChanged);
+    _controller.dispose();
+    _codeBlockLanguages.clear();
+    _initializeController();
+    if (mounted) setState(() {});
   }
 
 
