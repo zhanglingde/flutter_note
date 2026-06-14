@@ -48,6 +48,12 @@ dependencies:
   path_provider: ^2.1.5
   path: ^1.9.0
 
+  # Sync (crypto for SHA-256 content hashing)
+  crypto: ^3.0.5
+
+  # State management for sync UI
+  provider: ^6.1.2
+
   # Image support
   super_clipboard: ^0.9.0
   file_picker: ^9.2.1
@@ -70,6 +76,8 @@ dependencies:
   html: ^0.15.6
   reader_mode: ^0.2.2
   glob: ^2.1.0
+  dio: ^5.9.2
+  xml: ^6.6.1
 
 # sqlite3 包默认从 GitHub 下载预编译 DLL，网络不通时构建失败。
 # 改为使用 Windows 系统自带的 winsqlite3.dll（C:\Windows\System32\）。

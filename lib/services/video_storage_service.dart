@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -151,5 +152,18 @@ class VideoStorageService {
     } catch (_) {
       return null;
     }
+  }
+
+  /// 列出指定笔记的所有视频文件路径（不含缩略图）
+  Future<List<String>> listAssets(String noteId) async {
+    final appDir = await getApplicationDocumentsDirectory();
+    final videoDir = Directory('${appDir.path}/videos/$noteId');
+    if (!videoDir.existsSync()) return [];
+    return videoDir
+        .listSync()
+        .whereType<File>()
+        .where((f) => !p.basename(f.path).startsWith('thumb_'))
+        .map((f) => f.path)
+        .toList();
   }
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' show min, max;
@@ -11,17 +12,28 @@ import '../models/tab_state.dart';
 import '../services/note_storage_service.dart';
 import '../services/image_storage_service.dart';
 import '../services/video_storage_service.dart';
+import '../services/sync/sync_service.dart';
 import '../utils/delta_to_markdown.dart';
 import '../utils/media_thumbnail.dart';
 import '../widgets/rich_text_editor.dart';
+import '../widgets/sync_status_badge.dart';
+import 'conflict_viewer_screen.dart';
+import 'sync_settings_screen.dart';
 
 enum NoteListViewMode { list, waterfall }
 
 /// 首页 - 笔记列表
 class HomeScreen extends StatefulWidget {
   final NoteStorageService storageService;
+  final SyncService? syncService;
+  final bool syncEnabled;
 
-  const HomeScreen({super.key, required this.storageService});
+  const HomeScreen({
+    super.key,
+    required this.storageService,
+    this.syncService,
+    this.syncEnabled = false,
+  });
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -43,16 +55,116 @@ class _HomeScreenState extends State<HomeScreen> {
 
   static const int _maxTabs = 20;
 
+  /// 编辑防抖：连续输入后 30s 触发同步
+  Timer? _syncDebounce;
+
+  /// 应用生命周期观察者（前台恢复时触发同步）
+  ///
+  /// 可空：syncEnabled=false 时不创建。
+  WidgetsBindingObserver? _lifeCycleObserver;
+
   @override
   void initState() {
     super.initState();
     _loadViewMode();
     _loadNotes();
+    _triggerStartupSync();
   }
 
   @override
   void dispose() {
+    _syncDebounce?.cancel();
+    final observer = _lifeCycleObserver;
+    if (observer != null) {
+      WidgetsBinding.instance.removeObserver(observer);
+    }
     super.dispose();
+  }
+
+  // ==================== 同步触发 ====================
+
+  /// 启动后 2s 触发首次同步，并注册生命周期观察者。
+  ///
+  /// 延迟是为了让首屏渲染先完成，避免与初始化竞争 IO。
+  Future<void> _triggerStartupSync() async {
+    if (!widget.syncEnabled || widget.syncService == null) return;
+    await Future.delayed(const Duration(seconds: 2));
+    if (!mounted) return;
+    final observer = _SyncLifecycleObserver(
+      syncService: widget.syncService!,
+    );
+    _lifeCycleObserver = observer;
+    WidgetsBinding.instance.addObserver(observer);
+    await _safeSync();
+  }
+
+  /// 安全执行一次同步：捕获异常，同步成功后刷新笔记列表。
+  ///
+  /// 错误状态会写入 [SyncStateManager]，徽章会自动反映。
+  Future<void> _safeSync() async {
+    if (widget.syncService == null) return;
+    try {
+      await widget.syncService!.syncOnce();
+      if (mounted) _loadNotes();
+    } catch (_) {
+      // 错误已记入 SyncStateManager，徽章会显示
+    }
+  }
+
+  /// 显示同步面板（设置 / 冲突 / 立即同步）
+  void _showSyncPanel() {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.settings),
+              title: const Text('同步设置'),
+              onTap: () {
+                Navigator.pop(ctx);
+                if (widget.syncService != null && mounted) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => SyncSettingsScreen(
+                        syncService: widget.syncService!,
+                      ),
+                    ),
+                  );
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.warning),
+              title: const Text('查看冲突副本'),
+              onTap: () {
+                Navigator.pop(ctx);
+                if (widget.syncService != null && mounted) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ConflictViewerScreen(
+                        syncService: widget.syncService!,
+                      ),
+                    ),
+                  );
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.sync),
+              title: const Text('立即同步'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _safeSync();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _loadViewMode() async {
@@ -229,6 +341,14 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     _updateNoteInList(updatedNote);
     widget.storageService.scheduleAutoSave(updatedNote);
+
+    // 编辑后 30s 防抖触发同步
+    if (widget.syncEnabled && widget.syncService != null) {
+      _syncDebounce?.cancel();
+      _syncDebounce = Timer(const Duration(seconds: 30), () {
+        _safeSync();
+      });
+    }
   }
 
   void _reorderTabs(int oldIndex, int newIndex) {
@@ -694,6 +814,9 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('笔记'),
         actions: [
+          SyncStatusBadge(
+            onTap: () => _showSyncPanel(),
+          ),
           IconButton(
             icon: const Icon(Icons.search),
             onPressed: () async {
@@ -765,6 +888,9 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             automaticallyImplyLeading: false,
             actions: [
+              SyncStatusBadge(
+                onTap: () => _showSyncPanel(),
+              ),
               IconButton(
                 icon: const Icon(Icons.search),
                 onPressed: () async {
@@ -1244,6 +1370,31 @@ String _extractTitle(String content) {
     return '';
   } catch (e) {
     return '';
+  }
+}
+
+/// 应用生命周期观察者：前台恢复时按节流策略触发同步。
+///
+/// 节流：每次 resume 至少间隔 5s 才会真正触发；同时 resume 后再延迟 5s
+/// 触发同步，避免频繁前后台切换导致抖动。
+class _SyncLifecycleObserver extends WidgetsBindingObserver {
+  final SyncService syncService;
+  DateTime? _lastResume;
+
+  _SyncLifecycleObserver({required this.syncService});
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      final now = DateTime.now();
+      if (_lastResume == null ||
+          now.difference(_lastResume!) > const Duration(seconds: 5)) {
+        _lastResume = now;
+        Future.delayed(const Duration(seconds: 5), () {
+          syncService.syncOnce().catchError((_) {});
+        });
+      }
+    }
   }
 }
 

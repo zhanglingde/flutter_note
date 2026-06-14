@@ -55,4 +55,16 @@ class ImageStorageService {
     final file = File(filePath);
     return file.existsSync() ? file : null;
   }
+
+  /// 列出指定笔记的所有图片文件路径
+  Future<List<String>> listAssets(String noteId) async {
+    final appDir = await getApplicationDocumentsDirectory();
+    final imageDir = Directory('${appDir.path}/images/$noteId');
+    if (!imageDir.existsSync()) return [];
+    return imageDir
+        .listSync()
+        .whereType<File>()
+        .map((f) => f.path)
+        .toList();
+  }
 }
