@@ -67,6 +67,16 @@ class SyncService {
     rootPath = config.webdavRootPath;
   }
 
+  /// 最小连通性探测：仅做一次只读请求验证地址+凭据，无副作用。
+  ///
+  /// 给设置页"测试连接"按钮调用——避免为了测连接就触发完整同步
+  /// （后者会建目录、上传下载、可能改数据，且错误链路长难诊断）。
+  ///
+  /// 失败抛带可读中文诊断的 [Exception]。
+  Future<void> testConnection() async {
+    await backend.testConnection(rootPath);
+  }
+
   /// 触发一次同步。多次并发调用自动串行化。
   Future<void> syncOnce() async {
     if (_runningLock != null) {

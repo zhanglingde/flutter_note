@@ -69,12 +69,14 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
       _testResult = null;
     });
     try {
-      // 触发一次同步作为连接测试
-      await widget.syncService.syncOnce();
+      // 只做最小连通性探测，不触发完整同步（避免建目录/上传等副作用，
+      // 且错误链路短，诊断更清晰）。
+      await widget.syncService.testConnection();
       if (mounted) {
         setState(() => _testResult = '连接成功');
       }
     } catch (e) {
+      debugPrint('[SyncSettings] 测试连接失败: $e');
       if (mounted) {
         setState(() => _testResult = '失败：$e');
       }

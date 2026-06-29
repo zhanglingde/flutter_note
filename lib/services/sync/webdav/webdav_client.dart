@@ -24,9 +24,33 @@ class WebDAVClient {
   /// Digest 认证兜底拦截器：服务器要求 Digest 时自动重试。
   final DigestAuthInterceptor _digestInterceptor;
 
+  /// 伪装成原生 Cyberduck 客户端的全套请求头（最大化模拟）。
+  ///
+  /// 部分服务器会按 UA + 请求头组合白名单放行客户端：
+  /// - 坚果云：不校验，任意 UA 都行
+  /// - 中国科技云数据胶囊（data.cstcloud.cn）：只放行官方认可客户端
+  ///   （Cyberduck / rclone / RaiDrive / Win 网络映射 等），
+  ///   Dio 默认 UA（Dart/3.x）会被判为非法程序，直接 403 Client type mismatch；
+  ///   仅改 UA 仍可能被「请求头组合不完整」识别出来，故补齐 Cyberduck 原生发的全套头。
+  ///
+  /// 写到实例默认头而非每请求 Options，确保 MKCOL/PUT/GET/DELETE/HEAD/PROPFIND
+  /// 全覆盖；per-request 仍可覆盖（如 PROPFIND 的 Depth、PUT 的 Content-Type）。
+  static const String _userAgent =
+      'Cyberduck/9.0.1 (Windows 10/10.0) (x86_64)';
+
+  static const Map<String, String> _cyberduckHeaders = {
+    'user-agent': _userAgent,
+    'Accept': '*/*',
+    'Accept-Encoding': 'gzip, deflate',
+    'Connection': 'keep-alive',
+  };
+
   WebDAVClient({Dio? dio, required this.baseUrl})
       : dio = dio ?? Dio(),
         _digestInterceptor = DigestAuthInterceptor(dio ?? Dio()) {
+    // 模拟 Cyberduck 的全套默认请求头：规避按客户端类型 / 请求头组合拦截的服务器。
+    // 写到实例默认头，MKCOL/PUT/GET/DELETE/HEAD/PROPFIND 全覆盖。
+    this.dio.options.headers.addAll(_cyberduckHeaders);
     // Basic 认证注入：每次请求都用最新凭据计算 header，
     // 避免 dio.options.headers 在某些路径下不合并的问题。
     this.dio.interceptors.add(InterceptorsWrapper(
@@ -39,6 +63,10 @@ class WebDAVClient {
       },
     ));
     this.dio.interceptors.add(_digestInterceptor);
+    // 诊断日志拦截器：所有请求/响应（含错误响应）都打到 debugPrint，
+    // 用于排查 WebDAV 连接问题（403/401/超时/URL 错等）。
+    // 放在最后，确保能拿到 Digest 重试后的最终响应。
+    this.dio.interceptors.add(_DebugLogInterceptor());
   }
 
   /// 设置凭据：同时写 Basic 头（坚果云等）和给 Digest 拦截器留底（家用 NAS 等）。
@@ -153,5 +181,106 @@ class WebDAVClient {
     // 相对路径：直接拼 baseUrl + path
     final base = baseUrl.endsWith('/') ? baseUrl : '$baseUrl/';
     return '$base$normalizedPath';
+  }
+}
+
+/// WebDAV 诊断日志拦截器（仅 [kDebugMode] 下生效，release 完全静默）。
+///
+/// 把每次请求/响应的关键信息打印到 debugPrint，便于在控制台定位
+/// 401/403/404/超时 等连接问题，并观察 PROPFIND/PUT 的实际收发内容：
+/// - 请求（onRequest）：方法、完整 URL、脱敏后的头、body 大小/预览
+/// - 响应（onResponse）：状态码、Content-Length、body 预览
+///   （XML/JSON 文本截断预览，二进制只打印长度，避免刷屏/泄露笔记内容）
+/// - 错误（onError）：DioException 类型、状态码、响应头、响应体
+///
+/// 敏感头（Authorization、Cookie）会被脱敏为 `***`，不会泄露凭据。
+/// release 模式直接 return，不做任何字符串拼接，零开销。
+class _DebugLogInterceptor extends Interceptor {
+  /// 文本 body 预览最大字符数（避免 PROPFIND 大 XML 刷屏）
+  static const int _maxTextPreview = 1000;
+
+  @override
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    if (!kDebugMode) {
+      handler.next(options);
+      return;
+    }
+    final buf = StringBuffer('[WebDAV] → ${options.method} ${options.uri}');
+    final safeHeaders = _sanitizeHeaders(options.headers);
+    if (safeHeaders.isNotEmpty) buf.write('\n  headers: $safeHeaders');
+    final bodyDesc = _describeBody(options.data);
+    if (bodyDesc != null) buf.write('\n  body: $bodyDesc');
+    debugPrint(buf.toString());
+    handler.next(options);
+  }
+
+  @override
+  void onResponse(Response response, ResponseInterceptorHandler handler) {
+    if (!kDebugMode) {
+      handler.next(response);
+      return;
+    }
+    final req = response.requestOptions;
+    final buf = StringBuffer(
+        '[WebDAV] ← ${req.method} ${req.uri} ${response.statusCode}');
+    final len = response.headers.value('content-length');
+    if (len != null) buf.write(' ($len bytes)');
+    final bodyDesc = _describeBody(response.data);
+    if (bodyDesc != null) buf.write('\n  body: $bodyDesc');
+    debugPrint(buf.toString());
+    handler.next(response);
+  }
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) {
+    if (!kDebugMode) {
+      handler.next(err);
+      return;
+    }
+    final req = err.requestOptions;
+    final code = err.response?.statusCode;
+    debugPrint(
+        '[WebDAV] ✗ ${req.method} ${req.uri} 失败 type=${err.type} status=$code');
+    if (err.response != null) {
+      debugPrint('[WebDAV] 错误响应头 '
+          'Server=${err.response?.headers.value('server')} '
+          'WWW-Authenticate=${err.response?.headers.value('www-authenticate')}');
+      final bodyDesc = _describeBody(err.response?.data);
+      if (bodyDesc != null) debugPrint('[WebDAV] 错误响应体: $bodyDesc');
+    }
+    handler.next(err);
+  }
+
+  /// 脱敏请求头：Authorization / Cookie 替换为 `***`，避免凭据进入日志
+  Map<String, dynamic> _sanitizeHeaders(Map<String, dynamic> headers) {
+    final result = Map<String, dynamic>.from(headers);
+    for (final key in result.keys.toList()) {
+      final lower = key.toLowerCase();
+      if (lower == 'authorization' || lower == 'cookie') {
+        result[key] = '***';
+      }
+    }
+    return result;
+  }
+
+  /// 描述 body：
+  /// - 二进制（Uint8List / List）→ 只打印字节数，避免刷屏和泄露笔记内容
+  /// - 字符串（PROPFIND 的 XML、错误响应 HTML）→ 截断到 [_maxTextPreview] 预览
+  /// - null / 空 → 返回 null（调用方据此跳过整行打印）
+  String? _describeBody(dynamic data) {
+    if (data == null) return null;
+    if (data is Uint8List) {
+      return data.isEmpty ? null : '<bytes ${data.length}B>';
+    }
+    if (data is List<int>) {
+      return data.isEmpty ? null : '<bytes ${data.length}B>';
+    }
+    if (data is String) {
+      if (data.isEmpty) return null;
+      return data.length > _maxTextPreview
+          ? '${data.substring(0, _maxTextPreview)}…(${data.length} chars)'
+          : data;
+    }
+    return data.toString();
   }
 }

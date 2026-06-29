@@ -16,6 +16,11 @@ class LocalBackend implements SyncBackend {
   }
 
   @override
+  Future<void> testConnection(String rootPath) async {
+    // 内存后端永远"连通"，无需探测。
+  }
+
+  @override
   Future<void> mkcol(String path) async {
     _dirs.add(path);
   }

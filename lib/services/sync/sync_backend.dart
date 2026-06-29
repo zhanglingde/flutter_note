@@ -82,4 +82,21 @@ abstract class SyncBackend {
 
   /// 文件是否存在。
   Future<bool> exists(String path);
+
+  /// 最小连通性探测：仅做一次轻量请求验证凭据和地址可用。
+  ///
+  /// 默认实现用 [exists] 探测根路径，失败抛带可读诊断的 [Exception]。
+  /// 后端可覆写为更高效的探测（如 WebDAV 的 PROPFIND 根目录、S3 的 ListBucket）。
+  ///
+  /// 设计意图：把"测试连接"和"完整同步"解耦。前者只读、无副作用、
+  /// 诊断清晰；后者会创建目录、上传下载、可能改数据。
+  Future<void> testConnection(String rootPath) async {
+    try {
+      await exists(rootPath);
+    } on Exception {
+      rethrow;
+    } catch (e) {
+      throw Exception('连接测试失败：$e');
+    }
+  }
 }
