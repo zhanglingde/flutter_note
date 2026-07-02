@@ -2,19 +2,20 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../models/note.dart';
 import '../services/note_storage_service.dart';
-import '../services/image_storage_service.dart';
-import '../services/video_storage_service.dart';
+import '../services/sync/asset_repository.dart';
 import '../widgets/rich_text_editor.dart';
 
 /// 编辑器页面
 class EditorScreen extends StatefulWidget {
   final Note note;
   final NoteStorageService storageService;
+  final AssetRepository assetRepository;
 
   const EditorScreen({
     super.key,
     required this.note,
     required this.storageService,
+    required this.assetRepository,
   });
 
   @override
@@ -121,11 +122,6 @@ class _EditorScreenState extends State<EditorScreen> {
           final result = await widget.storageService.deleteNote(
             _currentNote.id,
           );
-          if (result.success) {
-            // 清理笔记关联的图片文件
-            await ImageStorageService().deleteImagesForNote(_currentNote.id);
-            await VideoStorageService().deleteVideosForNote(_currentNote.id);
-          }
           if (result.success && mounted) {
             Navigator.of(context).pop();
           } else if (mounted) {
@@ -231,6 +227,8 @@ class _EditorScreenState extends State<EditorScreen> {
           initialContent: _currentNote.content,
           onContentChanged: _onContentChanged,
           noteId: _currentNote.id,
+          storageService: widget.storageService,
+          assetRepository: widget.assetRepository,
           onClipToNewNote: (deltaJson) async {
             final now = DateTime.now();
             final title = _extractTitle(deltaJson);
@@ -250,6 +248,7 @@ class _EditorScreenState extends State<EditorScreen> {
                   builder: (context) => EditorScreen(
                     note: note,
                     storageService: widget.storageService,
+                    assetRepository: widget.assetRepository,
                   ),
                 ),
               );

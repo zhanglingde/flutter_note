@@ -10,9 +10,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/note.dart';
 import '../models/tab_state.dart';
 import '../services/note_storage_service.dart';
-import '../services/image_storage_service.dart';
-import '../services/video_storage_service.dart';
 import '../services/sync/sync_service.dart';
+import '../services/sync/asset_repository.dart';
 import '../utils/delta_to_markdown.dart';
 import '../utils/media_thumbnail.dart';
 import '../widgets/rich_text_editor.dart';
@@ -27,12 +26,14 @@ class HomeScreen extends StatefulWidget {
   final NoteStorageService storageService;
   final SyncService? syncService;
   final bool syncEnabled;
+  final AssetRepository assetRepository;
 
   const HomeScreen({
     super.key,
     required this.storageService,
     this.syncService,
     this.syncEnabled = false,
+    required this.assetRepository,
   });
 
   @override
@@ -410,6 +411,7 @@ class _HomeScreenState extends State<HomeScreen> {
             builder: (context) => _EditorScreenWrapper(
               note: note,
               storageService: widget.storageService,
+              assetRepository: widget.assetRepository,
             ),
           ),
         );
@@ -433,6 +435,7 @@ class _HomeScreenState extends State<HomeScreen> {
           builder: (context) => _EditorScreenWrapper(
             note: note,
             storageService: widget.storageService,
+            assetRepository: widget.assetRepository,
           ),
         ),
       );
@@ -454,8 +457,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _performDeleteNote(Note note) async {
     final result = await widget.storageService.deleteNote(note.id);
     if (result.success) {
-      await ImageStorageService().deleteImagesForNote(note.id);
-      await VideoStorageService().deleteVideosForNote(note.id);
+      // 笔记相关附件由 storageService.deleteNote 内部通过引用计数自动清理
       if (_tabs.any((t) => t.id == note.id)) {
         _closeTabWithoutSave(note.id);
       }
@@ -644,6 +646,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     onContentChanged: (content) =>
                         _onTabContentChanged(tab.id, content),
                     noteId: tab.note.id,
+                    storageService: widget.storageService,
+                    assetRepository: widget.assetRepository,
                     onClipToNewNote: (deltaJson) => _clipToNewNote(deltaJson),
                     actions: [
                       PopupMenuButton<String>(
@@ -1402,10 +1406,12 @@ class _SyncLifecycleObserver extends WidgetsBindingObserver {
 class _EditorScreenWrapper extends StatefulWidget {
   final Note note;
   final NoteStorageService storageService;
+  final AssetRepository assetRepository;
 
   const _EditorScreenWrapper({
     required this.note,
     required this.storageService,
+    required this.assetRepository,
   });
 
   @override
@@ -1505,12 +1511,6 @@ class _EditorScreenWrapperState extends State<_EditorScreenWrapper> {
                     if (confirmed == true && mounted) {
                       final result = await widget.storageService
                           .deleteNote(_currentNote.id);
-                      if (result.success) {
-                        await ImageStorageService()
-                            .deleteImagesForNote(_currentNote.id);
-                        await VideoStorageService()
-                            .deleteVideosForNote(_currentNote.id);
-                      }
                       if (result.success && mounted) {
                         Navigator.of(context).pop();
                       }
@@ -1543,6 +1543,8 @@ class _EditorScreenWrapperState extends State<_EditorScreenWrapper> {
           initialContent: _currentNote.content,
           onContentChanged: _onContentChanged,
           noteId: _currentNote.id,
+          storageService: widget.storageService,
+          assetRepository: widget.assetRepository,
           onClipToNewNote: (deltaJson) async {
             final now = DateTime.now();
             final title = _extractTitle(deltaJson);
@@ -1562,6 +1564,7 @@ class _EditorScreenWrapperState extends State<_EditorScreenWrapper> {
                   builder: (context) => _EditorScreenWrapper(
                     note: note,
                     storageService: widget.storageService,
+                    assetRepository: widget.assetRepository,
                   ),
                 ),
               );

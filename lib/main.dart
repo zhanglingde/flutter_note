@@ -11,6 +11,8 @@ import 'services/clipper/template_extractor.dart';
 import 'services/clipper/extractors/zhihu_extractor.dart';
 import 'services/clipper/extractors/zhihu_zhuanlan_extractor.dart';
 import 'services/clipper/extractors/xhs_extractor.dart';
+import 'services/sync/asset_repository.dart';
+import 'services/sync/asset_migration_service.dart';
 import 'services/sync/sync_config.dart';
 import 'services/sync/sync_service.dart';
 import 'services/sync/sync_state.dart';
@@ -34,6 +36,20 @@ void main() async {
   if (config.enabled && config.isValid) {
     await backend.authenticate(config.toCredentials());
   }
+
+  // 注入 AssetRepository（打破 NoteStorageService ↔ AssetRepository 循环依赖）
+  final assetRepo = AssetRepository(storageService);
+  storageService.setAssetRepository(assetRepo);
+
+  // 启动时跑迁移（历史 images/ videos/ → sync-assets/ + asset:// 协议）
+  // 失败不阻塞启动，下次启动重试
+  final migrator = AssetMigrationService(repo: assetRepo, storage: storageService);
+  try {
+    await migrator.migrateIfNeeded();
+  } catch (e) {
+    debugPrint('[migration] failed: $e  will retry on next launch');
+  }
+
   final syncService = SyncService(
     storage: storageService,
     backend: backend,
@@ -47,6 +63,7 @@ void main() async {
       syncService: syncService,
       syncState: syncState,
       syncEnabled: config.enabled,
+      assetRepository: assetRepo,
     ),
   );
 }
@@ -74,6 +91,7 @@ class NoteApp extends StatelessWidget {
   final SyncService syncService;
   final SyncStateManager syncState;
   final bool syncEnabled;
+  final AssetRepository assetRepository;
 
   const NoteApp({
     super.key,
@@ -81,6 +99,7 @@ class NoteApp extends StatelessWidget {
     required this.syncService,
     required this.syncState,
     required this.syncEnabled,
+    required this.assetRepository,
   });
 
   @override
@@ -124,6 +143,7 @@ class NoteApp extends StatelessWidget {
           storageService: storageService,
           syncService: syncService,
           syncEnabled: syncEnabled,
+          assetRepository: assetRepository,
         ),
       ),
     );

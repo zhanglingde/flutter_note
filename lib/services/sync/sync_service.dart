@@ -2,12 +2,17 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+// SyncService._getAssetsDir 需要读取 NoteStorageService.appDocumentsDirOverride
+// （@visibleForTesting）以支持测试注入路径；这是测试基础设施的合理用法。
+// ignore_for_file: invalid_use_of_visible_for_testing_member
+
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../note_storage_service.dart';
 import '../../models/note.dart';
+import 'asset_reference.dart';
 import 'conflict_resolver.dart';
 import 'manifest_cache.dart';
 import 'sync_backend.dart';
@@ -106,8 +111,10 @@ class SyncService {
     state.markSyncing();
     try {
       await _ensureRootDirs();
-      await _pullPhase();
-      await _pushPhase();
+      await _pullPhase();          // 1. 笔记先来（带 assets 引用清单）
+      await _pushPhase();          // 2. 推笔记
+      await pushPendingAssets();   // 3. 推 dirty 附件
+      await pullMissingAssets();   // 4. 拉本地缺失附件
       await _updateManifest();
       state.markSuccess();
     } catch (e) {
@@ -283,6 +290,10 @@ class SyncService {
     final assets = (await storage.listSyncAssets()).data ?? const <SyncAssetRecord>[];
     for (final asset in assets) {
       if (asset.syncStatus != SyncStatus.dirty) continue;
+      // refCount=0 表示本地无引用——按 spec 决策表"资源 GC"行：
+      // 不 push 远端、保留 dirty 状态等 cleanupOrphanAssets 清理本地表与文件
+      // （远端文件按设计意图保留以备其他设备引用）。
+      if (asset.refCount <= 0) continue;
 
       final remotePath = _PathUtil.join(
           rootPath, 'assets/${asset.hash}.${asset.ext}');
@@ -317,16 +328,42 @@ class SyncService {
     }
   }
 
-  /// 拉取远端所有本地缺失的资源
-  Future<void> pullMissingAssets() async {
-    final remoteAssetFiles =
-        await backend.listDir(_PathUtil.join(rootPath, 'assets/'));
+  /// 拉取远端附件到本地。
+  ///
+  /// [hashFilter] 非空时只拉指定 hash 集合（用于渲染层按需拉取）；为空时
+  /// 全量扫描远端 assets/ 目录、拉取本地缺失的所有资源。
+  Future<void> pullMissingAssets({Set<String>? hashFilter}) async {
     final localAssets = {
       for (final a in (await storage.listSyncAssets()).data ?? const <SyncAssetRecord>[])
         a.hash: a,
     };
 
-    for (final f in remoteAssetFiles) {
+    final candidates = <RemoteFile>[];
+    if (hashFilter == null || hashFilter.isEmpty) {
+      candidates.addAll(
+        await backend.listDir(_PathUtil.join(rootPath, 'assets/')),
+      );
+    } else {
+      // 仅探测 hashFilter 中的文件：直接 download（不存在会被 backend 抛错，捕获跳过）
+      for (final hash in hashFilter) {
+        if (localAssets.containsKey(hash)) continue;
+        // 我们不知道 ext，按常见扩展名依次探测；命中即加入 candidates
+        for (final ext in const ['png', 'jpg', 'jpeg', 'mp4', 'mov']) {
+          final path = _PathUtil.join(rootPath, 'assets/$hash.$ext');
+          if (await backend.exists(path)) {
+            candidates.add(RemoteFile(
+              path: path,
+              size: 0,
+              lastModified: DateTime.now(),
+              etag: null,
+            ));
+            break;
+          }
+        }
+      }
+    }
+
+    for (final f in candidates) {
       final basename = f.path.split('/').last;
       final dot = basename.lastIndexOf('.');
       final hash = dot > 0 ? basename.substring(0, dot) : basename;
@@ -342,7 +379,7 @@ class SyncService {
           localPath: localPath,
           remoteEtag: f.etag,
           syncStatus: SyncStatus.clean,
-          refCount: 1, // 默认 1，引用计数维护由调用方负责
+          refCount: 0, // 引用计数由调用方 saveNote 维护
         );
       } catch (e) {
         debugPrint('pull asset $hash failed: $e');
@@ -358,20 +395,34 @@ class SyncService {
     return path;
   }
 
-  /// 清理本地 sync_assets 表中 refCount=0 的记录（不删远程）
+  /// 清理本地 sync_assets 表中 refCount=0 的记录（不删远程）。
+  /// 同步删除 sync-assets/{hash}.{ext} 本地文件，避免磁盘堆积无引用附件。
   Future<void> cleanupOrphanAssets() async {
     final assets =
         (await storage.listSyncAssets()).data ?? const <SyncAssetRecord>[];
+    final dir = await _getAssetsDir();
     for (final asset in assets) {
       if (asset.refCount <= 0) {
+        final path = _PathUtil.join(dir.path, '${asset.hash}.${asset.ext}');
+        try {
+          final file = File(path);
+          if (file.existsSync()) await file.delete();
+        } catch (e) {
+          debugPrint('[cleanup] failed to delete $path: $e');
+        }
         await storage.deleteSyncAsset(asset.hash);
       }
     }
   }
 
   Future<Directory> _getAssetsDir() async {
-    final appDir = await getApplicationDocumentsDirectory();
-    final dir = Directory(_PathUtil.join(appDir.path, 'sync-assets'));
+    final String appDirPath;
+    if (storage.appDocumentsDirOverride != null) {
+      appDirPath = storage.appDocumentsDirOverride!;
+    } else {
+      appDirPath = (await getApplicationDocumentsDirectory()).path;
+    }
+    final dir = Directory(_PathUtil.join(appDirPath, 'sync-assets'));
     if (!dir.existsSync()) {
       dir.createSync(recursive: true);
     }
@@ -459,15 +510,23 @@ class SyncService {
   }
 
   Uint8List _encodeNote(Note note) {
+    final hashes = AssetReference.scanHashes(note.content);
+    final assets = <Map<String, dynamic>>[
+      for (final h in hashes) {'hash': h, 'ext': '', 'kind': 'unknown'}
+    ];
+    // 注意 ext/kind 仅作信息性字段（解码端不强校验），实际渲染时按 hash 从
+    // sync_assets 表反查 ext。这里写空字符串避免在 _encodeNote 里二次查表。
+    // 后续 _decodeNote 处理 assets 字段时只关心 hash 是否在 sync_assets 表里。
+
     final map = <String, dynamic>{
-      'schema': 1,
+      'schema': 2,
       'id': note.id,
       'title': note.title,
       'content': note.content,
       'type': note.type,
       'createdAt': note.createdAt.toIso8601String(),
       'updatedAt': note.updatedAt.toIso8601String(),
-      'assets': <Map<String, dynamic>>[],
+      'assets': assets,
       'deletedAt': note.deletedAt?.toIso8601String(),
     };
     return Uint8List.fromList(utf8.encode(jsonEncode(map)));
@@ -476,6 +535,9 @@ class SyncService {
   Note? _decodeNote(List<int> bytes, {String? expectedEtag}) {
     try {
       final map = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+      // schema=1（旧远端笔记）和 schema=2（新版）都按相同字段读取；assets 字段
+      // 暂不在解码时强校验——引用计数维护由 NoteStorageService.saveNote 触发，
+      // 同步路径下的笔记先入库，后续打开渲染时才触发 pullMissingAssets。
       return Note(
         id: map['id'] as String,
         title: (map['title'] ?? '') as String,

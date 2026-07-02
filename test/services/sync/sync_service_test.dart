@@ -41,7 +41,7 @@ Future<void> _overwriteRemote(LocalBackend backend, Note note) async {
 
 Uint8List _encodeNote(Note note) {
   final map = <String, dynamic>{
-    'schema': 1,
+    'schema': 2,
     'id': note.id,
     'title': note.title,
     'content': note.content,
@@ -64,12 +64,20 @@ void main() {
   late LocalBackend backend;
   late SyncStateManager state;
   late SyncService sync;
+  // 保存 SyncService.appDocumentsDirOverride 指向的临时目录，用于 tearDown 清理。
+  late Directory tmpAppDocsDir;
 
   setUp(() async {
     storage = NoteStorageService()
       ..dbPathOverride =
           (await Directory.systemTemp.createTemp('note_sync_service_test_')).path;
     await storage.init();
+    // 为 SyncService 也准备一个独立的 app docs 目录，避免 pullMissingAssets
+    // 写到真实设备目录（path_provider 在测试环境下未 mock）。
+    tmpAppDocsDir = await Directory.systemTemp.createTemp('note_sync_appdocs_');
+    // 复用 storage.appDocumentsDirOverride（SyncService._getAssetsDir 也读它），
+    // 避免 SyncService 与 NoteStorageService 持有两份必须手动同步的字段。
+    storage.appDocumentsDirOverride = tmpAppDocsDir.path;
     backend = LocalBackend();
     state = SyncStateManager();
     sync = SyncService(
@@ -85,6 +93,9 @@ void main() {
 
   tearDown(() async {
     await storage.close();
+    if (tmpAppDocsDir.existsSync()) {
+      await tmpAppDocsDir.delete(recursive: true);
+    }
   });
 
   test('first sync: local dirty note gets uploaded; remote manifest created',
@@ -411,26 +422,210 @@ void main() {
     await tmpDir.delete(recursive: true);
   });
 
-  test('cleanupOrphanAssets removes assets with refCount=0', () async {
+  test('cleanupOrphanAssets removes assets with refCount=0 and deletes local file', () async {
+    // 在 sync-assets/ 目录下放两个真实文件，仅一个 refCount=0
+    final assetsDirPath = '${storage.appDocumentsDirOverride}/sync-assets';
+    await Directory(assetsDirPath).create(recursive: true);
+    final orphanFile = File('$assetsDirPath/h-orphan.png')..writeAsBytesSync([1, 2, 3]);
+    final usedFile = File('$assetsDirPath/h-used.png')..writeAsBytesSync([4, 5, 6]);
+    expect(orphanFile.existsSync(), isTrue);
+    expect(usedFile.existsSync(), isTrue);
+
     await storage.upsertSyncAsset(
       hash: 'h-orphan',
       ext: 'png',
-      localPath: '/tmp/orphan.png',
+      localPath: orphanFile.path,
       syncStatus: SyncStatus.clean,
       refCount: 0,
     );
     await storage.upsertSyncAsset(
       hash: 'h-used',
       ext: 'png',
-      localPath: '/tmp/used.png',
+      localPath: usedFile.path,
       syncStatus: SyncStatus.clean,
       refCount: 1,
     );
 
     await sync.cleanupOrphanAssets();
 
+    // 表记录只剩被引用的
     final assets = (await storage.listSyncAssets()).data!;
     expect(assets.map((a) => a.hash).toSet(), {'h-used'});
+    // 本地文件：孤儿被删，被引用的保留
+    expect(orphanFile.existsSync(), isFalse);
+    expect(usedFile.existsSync(), isTrue);
+  });
+
+  test('decodeNote reads schema 2 with assets field', () async {
+    final hash = 'a' * 64;
+    final remoteJson = jsonEncode({
+      'schema': 2,
+      'id': 'note-with-assets',
+      'title': 'T',
+      'content':
+          '{"insert":"hi\\n","embed":{"type":"image","source":"asset://$hash.png"}}',
+      'type': 'rich_text',
+      'createdAt': DateTime.now().toIso8601String(),
+      'updatedAt': DateTime.now().toIso8601String(),
+      'assets': [
+        {'hash': hash, 'ext': 'png', 'kind': 'image'}
+      ],
+      'deletedAt': null,
+    });
+    await backend.mkcol('/notes-app/');
+    await backend.mkcol('/notes-app/notes/');
+    await backend.upload(
+      '/notes-app/notes/note-with-assets.json',
+      Uint8List.fromList(utf8.encode(remoteJson)),
+    );
+
+    await sync.syncOnce();
+
+    final local = (await storage.loadNoteById('note-with-assets')).data;
+    expect(local, isNotNull);
+    expect(local!.syncStatus, SyncStatus.clean);
+    // content 里的 asset:// 引用必须原样保留
+    expect(local.content, contains('asset://$hash.png'));
+  });
+
+  // ============================================================
+  // 任务 8：_doSync 串接附件 push/pull
+  // ============================================================
+  test('doSync pushes pending assets after notes', () async {
+    final note = _makeNote('note-with-asset');
+    final assetHash = 'a' * 64;
+    note.content =
+        '{"insert":{"image":"asset://$assetHash.png"}}{"insert":"\\n"}';
+    await storage.saveNote(note.copyWith(syncStatus: SyncStatus.dirty));
+
+    // 直接写一条 sync_assets 记录（绕过 AssetRepository，模拟历史数据）
+    // localPath 必须落在 SyncService._getAssetsDir() 管理的目录里
+    final assetsDirPath = '${storage.appDocumentsDirOverride}/sync-assets';
+    final tmpAssetDir = Directory(assetsDirPath);
+    if (!tmpAssetDir.existsSync()) tmpAssetDir.createSync(recursive: true);
+    final assetFile = File('${tmpAssetDir.path}/$assetHash.png');
+    await assetFile.writeAsBytes([1, 2, 3]);
+    await storage.upsertSyncAsset(
+      hash: assetHash,
+      ext: 'png',
+      localPath: assetFile.path,
+      syncStatus: SyncStatus.dirty,
+      refCount: 1,
+    );
+
+    await sync.syncOnce();
+
+    expect(await backend.exists('/notes-app/notes/note-with-asset.json'), isTrue);
+    expect(await backend.exists('/notes-app/assets/$assetHash.png'), isTrue);
+  });
+
+  test('doSync pulls missing assets after notes', () async {
+    final assetHash = 'b' * 64;
+    final remoteJson = jsonEncode({
+      'schema': 2,
+      'id': 'note-remote-with-asset',
+      'title': 'T',
+      'content':
+          '{"insert":{"image":"asset://$assetHash.png"}}{"insert":"\\n"}',
+      'type': 'rich_text',
+      'createdAt': DateTime.now().toIso8601String(),
+      'updatedAt': DateTime.now().toIso8601String(),
+      'assets': [
+        {'hash': assetHash, 'ext': 'png', 'kind': 'image'}
+      ],
+      'deletedAt': null,
+    });
+
+    await backend.mkcol('/notes-app/');
+    await backend.mkcol('/notes-app/notes/');
+    await backend.mkcol('/notes-app/assets/');
+    await backend.upload(
+      '/notes-app/notes/note-remote-with-asset.json',
+      Uint8List.fromList(utf8.encode(remoteJson)),
+    );
+    await backend.upload(
+      '/notes-app/assets/$assetHash.png',
+      Uint8List.fromList([10, 20, 30]),
+    );
+
+    await sync.syncOnce();
+
+    final records = (await storage.listSyncAssets()).data!;
+    final r = records.where((x) => x.hash == assetHash).toList();
+    expect(r, isNotEmpty);
+    expect(r.first.syncStatus, SyncStatus.clean);
+    expect(File(r.first.localPath).existsSync(), isTrue);
+  });
+
+  // ============================================================
+  // 任务 9：pullMissingAssets 支持 hashFilter 单文件拉取
+  // ============================================================
+  test('pullMissingAssets with hashFilter pulls only specified hashes',
+      () async {
+    final hashD = 'd' * 64;
+    final hashE = 'e' * 64;
+    await backend.mkcol('/notes-app/');
+    await backend.mkcol('/notes-app/assets/');
+    await backend.upload(
+      '/notes-app/assets/$hashD.png',
+      Uint8List.fromList([1, 2, 3]),
+    );
+    await backend.upload(
+      '/notes-app/assets/$hashE.png',
+      Uint8List.fromList([4, 5, 6]),
+    );
+
+    await sync.pullMissingAssets(hashFilter: {hashD});
+
+    final records = (await storage.listSyncAssets()).data!;
+    final hashes = records.map((a) => a.hash).toSet();
+    expect(hashes, contains(hashD));
+    expect(hashes, isNot(contains(hashE)));
+  });
+
+  test('pullMissingAssets without hashFilter pulls all (backwards compat)',
+      () async {
+    final hashF = 'f' * 64;
+    final hashA1 = 'a1' * 32; // 64 字符，全部 hex 合法
+    await backend.mkcol('/notes-app/');
+    await backend.mkcol('/notes-app/assets/');
+    await backend.upload(
+      '/notes-app/assets/$hashF.png',
+      Uint8List.fromList([1, 2, 3]),
+    );
+    await backend.upload(
+      '/notes-app/assets/$hashA1.png',
+      Uint8List.fromList([4, 5, 6]),
+    );
+
+    await sync.pullMissingAssets(); // 不传 hashFilter
+
+    final records = (await storage.listSyncAssets()).data!;
+    expect(records.length, 2);
+  });
+
+  test('asset push failure does not block note sync', () async {
+    final note = _makeNote('note-ok');
+    final assetHash = 'c' * 64;
+    note.content =
+        '{"insert":{"image":"asset://$assetHash.png"}}{"insert":"\\n"}';
+    await storage.saveNote(note.copyWith(syncStatus: SyncStatus.dirty));
+
+    // sync_assets 记录指向一个不存在的文件
+    await storage.upsertSyncAsset(
+      hash: assetHash,
+      ext: 'png',
+      localPath: '/tmp/nonexistent-$assetHash.png', // 故意不存在
+      syncStatus: SyncStatus.dirty,
+      refCount: 1,
+    );
+
+    await sync.syncOnce(); // 不应抛
+
+    expect(await backend.exists('/notes-app/notes/note-ok.json'), isTrue);
+    // 该资源未被上传，sync_status 仍是 dirty
+    final r = (await storage.listSyncAssets()).data!.first;
+    expect(r.syncStatus, SyncStatus.dirty);
   });
 }
 
@@ -467,6 +662,10 @@ class _PushConflictBackend implements SyncBackend {
 
   @override
   Future<void> delete(String path) => _inner.delete(path);
+
+  @override
+  Future<void> testConnection(String rootPath) =>
+      _inner.testConnection(rootPath);
 
   @override
   Future<List<RemoteFile>> listDir(String path) async {
@@ -531,6 +730,10 @@ class _PrefixedPathBackend implements SyncBackend {
 
   @override
   Future<void> delete(String path) => _inner.delete(_stripPrefix(path));
+
+  @override
+  Future<void> testConnection(String rootPath) =>
+      _inner.testConnection(_stripPrefix(rootPath));
 
   @override
   Future<List<RemoteFile>> listDir(String path) async {

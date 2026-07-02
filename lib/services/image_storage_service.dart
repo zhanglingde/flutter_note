@@ -14,6 +14,7 @@ class ImageStorageService {
   /// [extension] 文件扩展名，默认 png
   ///
   /// 返回图片文件的完整路径。
+  @Deprecated('由 AssetRepository.save 取代，2026-07-02 起停用。保留只为编译兼容。')
   Future<String> saveImage(
     Uint8List imageBytes,
     String noteId, {
@@ -34,6 +35,7 @@ class ImageStorageService {
   }
 
   /// 删除笔记关联的所有图片
+  @Deprecated('由 NoteStorageService.deleteNote 内部维护引用计数取代，2026-07-02 起停用。保留只为编译兼容。')
   Future<void> deleteImagesForNote(String noteId) async {
     final appDir = await getApplicationDocumentsDirectory();
     final imageDir = Directory('${appDir.path}/images/$noteId');
@@ -43,6 +45,7 @@ class ImageStorageService {
   }
 
   /// 删除单个图片文件
+  @Deprecated('由 AssetRepository 配合引用计数取代，2026-07-02 起停用。保留只为编译兼容。')
   Future<void> deleteImage(String filePath) async {
     final file = File(filePath);
     if (file.existsSync()) {

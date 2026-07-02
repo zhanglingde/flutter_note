@@ -6,6 +6,8 @@ import 'package:path_provider/path_provider.dart';
 export 'package:sqflite/sqflite.dart' show Database, ConflictAlgorithm;
 import 'package:path/path.dart' as p;
 import '../models/note.dart';
+import 'sync/asset_reference.dart';
+import 'sync/asset_repository.dart';
 
 /// sync_assets 表的记录
 class SyncAssetRecord {
@@ -63,6 +65,42 @@ class NoteStorageService {
   /// 仅用于测试：覆盖 DB 文件所在目录，避免污染真实应用数据。
   @visibleForTesting
   String? dbPathOverride;
+
+  /// 测试用：覆盖 getApplicationDocumentsDirectory 返回值。生产环境留空。
+  @visibleForTesting
+  String? appDocumentsDirOverride;
+
+  /// 注入的附件仓库；非空时 saveNote/deleteNote 会按 diff 维护引用计数。
+  /// 通过 [setAssetRepository] 注入以打破与 AssetRepository 的循环依赖。
+  AssetRepository? _assetRepo;
+
+  /// 注入附件仓库。NoteStorageService 持有可选引用（避免循环依赖）：
+  /// repo 注入 storage，storage 又调 repo，靠 setter 打破环。
+  void setAssetRepository(AssetRepository repo) {
+    _assetRepo = repo;
+  }
+
+  /// 计算 oldContent → newContent 的引用 diff，按 diff 维护 ref_count。
+  /// 内部调用 [AssetReference.scanHashes] 扫描 asset:// 引用。
+  /// 若 [_assetRepo] 未注入，直接返回（兼容当前不依赖附件的代码路径）。
+  Future<void> _maintainRefCount({
+    required String? oldContent,
+    required String newContent,
+  }) async {
+    final repo = _assetRepo;
+    if (repo == null) return;
+
+    final oldHashes = oldContent != null
+        ? AssetReference.scanHashes(oldContent)
+        : <String>{};
+    final newHashes = AssetReference.scanHashes(newContent);
+
+    final removed = oldHashes.difference(newHashes);
+    final added = newHashes.difference(oldHashes);
+
+    if (removed.isNotEmpty) await repo.decrementRefs(removed);
+    if (added.isNotEmpty) await repo.incrementRefs(added);
+  }
 
   /// 初始化存储服务
   Future<StorageResult<void>> init() async {
@@ -189,6 +227,17 @@ class NoteStorageService {
               note.deletedAt == null
           ? note.copyWith(syncStatus: SyncStatus.dirty)
           : note;
+
+      // 维护附件引用计数：先加载旧笔记内容做 diff
+      if (_assetRepo != null) {
+        final oldNoteResult = await loadNoteById(note.id);
+        final oldContent = oldNoteResult.data?.content;
+        await _maintainRefCount(
+          oldContent: oldContent,
+          newContent: note.content,
+        );
+      }
+
       await _db!.insert(
         _tableNotes,
         toSave.toMap(),
@@ -268,6 +317,19 @@ class NoteStorageService {
   Future<StorageResult<void>> deleteNote(String id) async {
     try {
       _ensureInitialized();
+
+      // 删除前先解析 content 维护引用计数（diff 视旧内容为全部移除）
+      if (_assetRepo != null) {
+        final oldNoteResult = await loadNoteById(id);
+        final oldContent = oldNoteResult.data?.content;
+        if (oldContent != null) {
+          await _maintainRefCount(
+            oldContent: oldContent,
+            newContent: '', // 全部视为移除
+          );
+        }
+      }
+
       await _db!.delete(_tableNotes, where: 'id = ?', whereArgs: [id]);
       _lastError = null;
       return StorageResult.success(null);

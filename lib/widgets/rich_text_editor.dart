@@ -18,11 +18,12 @@ import 'dart:convert';
 import '../utils/markdown_auto_converter.dart';
 import '../utils/cn_en_formatter.dart';
 import '../utils/delta_to_markdown.dart';
-import '../services/image_storage_service.dart';
 import '../services/video_storage_service.dart';
+import '../services/note_storage_service.dart';
+import '../services/sync/asset_repository.dart';
+import '../services/sync/asset_resolver.dart';
 import '../services/web_clipper_service.dart';
 import '../services/clipper/extractor_registry.dart';
-import '../services/clipper/webview_extractor_mixin.dart';
 import 'outline_sidebar.dart';
 import 'clipper_webview_page.dart';
 import 'extractor_webview_page.dart';
@@ -36,6 +37,15 @@ class RichTextEditor extends StatefulWidget {
   final List<Widget> actions;
   final void Function(String deltaJson)? onClipToNewNote;
 
+  /// 可选：附件仓库。注入后，新插入的图片/视频会通过 [AssetRepository.save]
+  /// 落地为 asset:// 协议引用，支持多设备同步。
+  /// 不传时（默认）退回旧的本地存储行为。
+  final AssetRepository? assetRepository;
+
+  /// 可选：笔记存储服务。用于构造 [AssetResolver]（渲染层把 asset://
+  /// 解析回本地路径）。仅在 [assetRepository] 注入时需要。
+  final NoteStorageService? storageService;
+
   const RichTextEditor({
     super.key,
     required this.initialContent,
@@ -43,6 +53,8 @@ class RichTextEditor extends StatefulWidget {
     required this.noteId,
     this.actions = const [],
     this.onClipToNewNote,
+    this.assetRepository,
+    this.storageService,
   });
 
   @override
@@ -55,8 +67,14 @@ class _RichTextEditorState extends State<RichTextEditor> {
   final ScrollController _scrollController = ScrollController();
   bool _isInitialized = false;
 
-  final ImageStorageService _imageService = ImageStorageService();
   final VideoStorageService _videoService = VideoStorageService();
+
+  /// AssetResolver 实例（仅当 widget.storageService 注入时创建）。
+  /// 用于把笔记中的 asset:// 协议解析为本地文件路径供渲染使用。
+  late final AssetResolver? _assetResolver;
+
+  /// 当前注入的附件仓库（widget.assetRepository 的便捷访问器）。
+  AssetRepository? get _assetRepo => widget.assetRepository;
 
   /// 代码块语言映射：Block 的第一个 Line 偏移量 -> 语言
   final Map<int, String> _codeBlockLanguages = {};
@@ -95,6 +113,13 @@ class _RichTextEditorState extends State<RichTextEditor> {
   @override
   void initState() {
     super.initState();
+    assert(
+      (widget.assetRepository == null) == (widget.storageService == null),
+      'assetRepository 与 storageService 必须同时传或同时不传',
+    );
+    _assetResolver = (widget.storageService != null)
+        ? AssetResolver(widget.storageService!)
+        : null;
     _focusNode.onKeyEvent = (_, event) {
       if (event is! KeyDownEvent) return KeyEventResult.ignored;
       if (event.logicalKey == LogicalKeyboardKey.keyA &&
@@ -491,14 +516,15 @@ class _RichTextEditorState extends State<RichTextEditor> {
 
   /// 保存图片并插入到编辑器
   Future<void> _insertImage(Uint8List bytes, {String extension = 'png'}) async {
-    final filePath = await _imageService.saveImage(
-      bytes,
-      widget.noteId,
-      extension: extension,
-    );
+    if (_assetRepo == null) {
+      debugPrint(
+          '[RichTextEditor] assetRepository not injected, image insert ignored');
+      return;
+    }
+    final ref = await _assetRepo!.save(bytes, extension);
 
     final imageData = jsonEncode({
-      'source': filePath,
+      'source': ref.uri,
       'width': 400,
     });
 
@@ -528,28 +554,43 @@ class _RichTextEditorState extends State<RichTextEditor> {
 
   /// 保存视频文件并插入到编辑器
   Future<void> _insertVideo(Uint8List bytes, {String extension = 'mp4'}) async {
-    final filePath = await _videoService.saveVideo(
-      bytes,
-      widget.noteId,
-      extension: extension,
-    );
-
-    // 尝试生成缩略图，失败不阻塞插入
-    final thumbnail = await _videoService.generateThumbnail(
-      filePath,
-      widget.noteId,
-    );
+    if (_assetRepo == null) {
+      debugPrint(
+          '[RichTextEditor] assetRepository not injected, video insert ignored');
+      return;
+    }
+    final ref = await _assetRepo!.save(bytes, extension);
 
     final data = <String, dynamic>{
-      'source': filePath,
+      'source': ref.uri,
       'width': 400,
     };
-    if (thumbnail != null) {
-      data['thumbnail'] = thumbnail;
+
+    // 缩略图生成失败/异常不阻塞视频插入，仅省略 thumbnail 字段
+    final tmpDir = await Directory.systemTemp.createTemp('video_thumb_');
+    try {
+      final tmpVideoPath = '${tmpDir.path}/source.$extension';
+      await File(tmpVideoPath).writeAsBytes(bytes);
+      final thumbnailPath = await _videoService.generateThumbnail(
+        tmpVideoPath,
+        widget.noteId,
+      );
+      if (thumbnailPath != null) {
+        final thumbBytes = await File(thumbnailPath).readAsBytes();
+        final thumbRef = await _assetRepo!.save(thumbBytes, 'jpg');
+        data['thumbnail'] = thumbRef.uri;
+      } else {
+        debugPrint(
+            '[RichTextEditor] video thumbnail generation failed, inserting without thumbnail');
+      }
+    } catch (e) {
+      debugPrint(
+          '[RichTextEditor] video thumbnail generation error: $e, inserting without thumbnail');
+    } finally {
+      if (tmpDir.existsSync()) await tmpDir.delete(recursive: true);
     }
 
     final videoData = jsonEncode(data);
-
     final index = _controller.selection.baseOffset;
     _controller.replaceText(
       index,
@@ -1345,8 +1386,8 @@ class _RichTextEditorState extends State<RichTextEditor> {
                 textSpanBuilder: _codeHighlightSpanBuilder,
                 customLeadingBlockBuilder: _buildLeadingBlock,
                 embedBuilders: [
-                  _ImageEmbedBuilder(controller: _controller),
-                  _VideoEmbedBuilder(controller: _controller),
+                  _ImageEmbedBuilder(controller: _controller, resolver: _assetResolver),
+                  _VideoEmbedBuilder(controller: _controller, resolver: _assetResolver),
                 ],
               ),
             ),
@@ -1543,8 +1584,10 @@ class _RichTextEditorState extends State<RichTextEditor> {
 /// 图片嵌入渲染器
 class _ImageEmbedBuilder extends EmbedBuilder {
   final QuillController controller;
+  /// 用于把 asset:// 协议解析回本地路径。未注入时退回旧行为。
+  final AssetResolver? resolver;
 
-  _ImageEmbedBuilder({required this.controller});
+  _ImageEmbedBuilder({required this.controller, this.resolver});
 
   @override
   String get key => 'image';
@@ -1573,6 +1616,7 @@ class _ImageEmbedBuilder extends EmbedBuilder {
       source: source,
       initialWidth: width,
       allImages: allImages,
+      assetResolver: resolver,
       currentIndex: currentIndex >= 0 ? currentIndex : 0,
       onWidthChanged: (newWidth) {
         final newData = jsonEncode({
@@ -1633,6 +1677,9 @@ class _ResizableImage extends StatefulWidget {
   final VoidCallback onDelete;
   final List<String> allImages;
   final int currentIndex;
+  /// 可选的 asset 解析器。注入后，asset:// 协议会解析为本地路径，
+  /// 本地缺失时显示"附件未同步"占位图。未注入时退回旧行为。
+  final AssetResolver? assetResolver;
 
   const _ResizableImage({
     required this.source,
@@ -1641,6 +1688,7 @@ class _ResizableImage extends StatefulWidget {
     required this.onDelete,
     required this.allImages,
     required this.currentIndex,
+    this.assetResolver,
   });
 
   @override
@@ -1653,19 +1701,60 @@ class _ResizableImageState extends State<_ResizableImage> {
   double? _originalWidth;
   bool _isDragging = false;
 
+  /// 解析后的渲染路径：null 表示仍在解析中或解析失败。
+  /// 仅当 [widget.assetResolver] 注入时使用。
+  String? _resolvedPath;
+  bool _resolving = false;
+
   @override
   void initState() {
     super.initState();
     _width = widget.initialWidth;
-    _resolveImageSize();
+    _resolveSource();
   }
 
-  bool get _isNetworkUrl =>
-      widget.source.startsWith('http://') || widget.source.startsWith('https://');
+  bool _isNetworkUrl(String src) =>
+      src.startsWith('http://') || src.startsWith('https://');
 
-  void _resolveImageSize() {
-    final ImageProvider provider =
-        _isNetworkUrl ? NetworkImage(widget.source) : FileImage(File(widget.source));
+  /// 渲染当前应该使用的路径；null 表示无法渲染（本地缺失）。
+  ///
+  /// ⚠️ 调用方必须先检查 [_resolving]，仅在非解析中时调用本 getter。
+  /// 仅当 [widget.assetResolver] 注入时使用；未注入时直接返回 [widget.source]。
+  String? get _effectivePath {
+    if (widget.assetResolver == null) {
+      // 未注入 resolver：保留旧行为，直接使用 widget.source
+      return widget.source;
+    }
+    return _resolvedPath;
+  }
+
+  Future<void> _resolveSource() async {
+    final resolver = widget.assetResolver;
+    if (resolver == null) {
+      _resolveImageSize(widget.source);
+      return;
+    }
+    setState(() => _resolving = true);
+    String? resolved;
+    try {
+      resolved = await resolver.resolveLocalPath(widget.source);
+    } catch (e) {
+      debugPrint('[RichTextEditor] resolve asset failed for "${widget.source}": $e');
+    }
+    if (!mounted) return;
+    setState(() {
+      _resolvedPath = resolved;
+      _resolving = false;
+    });
+    if (resolved != null) {
+      _resolveImageSize(resolved);
+    }
+  }
+
+  void _resolveImageSize(String path) {
+    final ImageProvider provider = _isNetworkUrl(path)
+        ? NetworkImage(path)
+        : FileImage(File(path));
     provider.resolve(const ImageConfiguration()).addListener(
       ImageStreamListener((info, _) {
         if (mounted) {
@@ -1677,7 +1766,41 @@ class _ResizableImageState extends State<_ResizableImage> {
     );
   }
 
+  /// 附件未同步占位
+  Widget _buildMissingPlaceholder() {
+    return Container(
+      width: _width,
+      padding: const EdgeInsets.all(8),
+      color: Colors.grey.shade200,
+      child: const Row(
+        children: [
+          Icon(Icons.cloud_off, size: 16),
+          SizedBox(width: 4),
+          Text('附件未同步', style: TextStyle(fontSize: 12)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildResolvingPlaceholder() {
+    return SizedBox(
+      width: _width,
+      height: 200,
+      child: const Center(child: CircularProgressIndicator()),
+    );
+  }
+
   Widget _buildImage() {
+    // 注入了 resolver 且正在解析：显示进度占位
+    if (_resolving) {
+      return _buildResolvingPlaceholder();
+    }
+    // 注入了 resolver 但解析失败：显示未同步占位
+    final path = _effectivePath;
+    if (path == null) {
+      return _buildMissingPlaceholder();
+    }
+
     final errorWidget = Container(
       width: _width,
       padding: const EdgeInsets.all(8),
@@ -1691,16 +1814,16 @@ class _ResizableImageState extends State<_ResizableImage> {
       ),
     );
 
-    if (_isNetworkUrl) {
+    if (_isNetworkUrl(path)) {
       return Image.network(
-        widget.source,
+        path,
         width: _width,
         fit: BoxFit.contain,
         errorBuilder: (_, __, ___) => errorWidget,
       );
     }
     return Image.file(
-      File(widget.source),
+      File(path),
       width: _width,
       fit: BoxFit.contain,
       errorBuilder: (_, __, ___) => errorWidget,
@@ -1712,6 +1835,10 @@ class _ResizableImageState extends State<_ResizableImage> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.initialWidth != widget.initialWidth) {
       _width = widget.initialWidth;
+    }
+    if (oldWidget.source != widget.source) {
+      _resolvedPath = null;
+      _resolveSource();
     }
   }
 
@@ -1787,7 +1914,8 @@ class _ResizableImageState extends State<_ResizableImage> {
   /// 复制图片到剪贴板
   Future<void> _copyImage() async {
     try {
-      if (_isNetworkUrl) {
+      final path = _effectivePath;
+      if (path == null || _isNetworkUrl(path)) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('网络图片暂不支持复制')),
@@ -1795,7 +1923,7 @@ class _ResizableImageState extends State<_ResizableImage> {
         }
         return;
       }
-      final file = File(widget.source);
+      final file = File(path);
       if (!file.existsSync()) return;
       final bytes = await file.readAsBytes();
       final clipboard = SystemClipboard.instance;
@@ -2109,8 +2237,10 @@ class _ImagePreviewOverlayState extends State<_ImagePreviewOverlay> {
 
 class _VideoEmbedBuilder extends EmbedBuilder {
   final QuillController controller;
+  /// 用于把 asset:// 协议解析回本地路径。未注入时退回旧行为。
+  final AssetResolver? resolver;
 
-  _VideoEmbedBuilder({required this.controller});
+  _VideoEmbedBuilder({required this.controller, this.resolver});
 
   @override
   String get key => 'video';
@@ -2140,12 +2270,14 @@ class _VideoEmbedBuilder extends EmbedBuilder {
       return _VideoThumbnailWidget(
         thumbnailPath: thumbnail,
         source: source,
+        assetResolver: resolver,
         onDelete: onDelete,
       );
     }
 
     return _VideoPlayerWidget(
       source: source,
+      assetResolver: resolver,
       onDelete: onDelete,
     );
   }
@@ -2156,11 +2288,15 @@ class _VideoThumbnailWidget extends StatefulWidget {
   final String thumbnailPath;
   final String source;
   final VoidCallback? onDelete;
+  /// 可选的 asset 解析器。注入后，asset:// 缩略图会被解析为本地路径，
+  /// 本地缺失时显示"附件未同步"占位。未注入时退回旧行为。
+  final AssetResolver? assetResolver;
 
   const _VideoThumbnailWidget({
     required this.thumbnailPath,
     required this.source,
     this.onDelete,
+    this.assetResolver,
   });
 
   @override
@@ -2171,10 +2307,45 @@ class _VideoThumbnailWidgetState extends State<_VideoThumbnailWidget> {
   bool _showPlayer = false;
   bool _thumbnailExists = true;
 
+  /// 解析后的缩略图路径。仅当 [widget.assetResolver] 注入时使用。
+  String? _resolvedThumb;
+  bool _resolvingThumb = false;
+
   @override
   void initState() {
     super.initState();
-    _thumbnailExists = File(widget.thumbnailPath).existsSync();
+    if (widget.assetResolver != null) {
+      _resolvingThumb = true;
+      _resolveThumbnail();
+    } else {
+      _thumbnailExists = File(widget.thumbnailPath).existsSync();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _VideoThumbnailWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.thumbnailPath != widget.thumbnailPath) {
+      _resolvedThumb = null;
+      _resolveThumbnail();
+    }
+  }
+
+  Future<void> _resolveThumbnail() async {
+    final resolver = widget.assetResolver;
+    if (resolver == null) return;
+    String? resolved;
+    try {
+      resolved = await resolver.resolveLocalPath(widget.thumbnailPath);
+    } catch (e) {
+      debugPrint('[RichTextEditor] resolve thumbnail failed for "${widget.thumbnailPath}": $e');
+    }
+    if (!mounted) return;
+    setState(() {
+      _resolvedThumb = resolved;
+      _resolvingThumb = false;
+      _thumbnailExists = resolved != null;
+    });
   }
 
   void _showContextMenu(TapDownDetails details) {
@@ -2201,9 +2372,42 @@ class _VideoThumbnailWidgetState extends State<_VideoThumbnailWidget> {
 
   @override
   Widget build(BuildContext context) {
+    // 解析中：显示进度
+    if (_resolvingThumb) {
+      return const Align(
+        alignment: Alignment.centerLeft,
+        child: SizedBox(
+          width: 400,
+          height: 225,
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      );
+    }
+
+    // 注入了解析器但解析为空：附件未同步占位
+    if (widget.assetResolver != null && _resolvedThumb == null) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 8),
+          width: 400,
+          padding: const EdgeInsets.all(8),
+          color: Colors.grey.shade200,
+          child: const Row(
+            children: [
+              Icon(Icons.cloud_off, size: 16),
+              SizedBox(width: 4),
+              Text('附件未同步', style: TextStyle(fontSize: 12)),
+            ],
+          ),
+        ),
+      );
+    }
+
     if (!_thumbnailExists) {
       return _VideoPlayerWidget(
         source: widget.source,
+        assetResolver: widget.assetResolver,
         onDelete: widget.onDelete,
       );
     }
@@ -2211,12 +2415,17 @@ class _VideoThumbnailWidgetState extends State<_VideoThumbnailWidget> {
     if (_showPlayer) {
       return _VideoPlayerWidget(
         source: widget.source,
+        assetResolver: widget.assetResolver,
         onDelete: widget.onDelete,
         onDismissed: () {
           if (mounted) setState(() => _showPlayer = false);
         },
       );
     }
+
+    final thumbPath = widget.assetResolver != null
+        ? (_resolvedThumb ?? widget.thumbnailPath)
+        : widget.thumbnailPath;
 
     return Align(
       alignment: Alignment.centerLeft,
@@ -2238,7 +2447,7 @@ class _VideoThumbnailWidgetState extends State<_VideoThumbnailWidget> {
               alignment: Alignment.center,
               children: [
                 Image.file(
-                  File(widget.thumbnailPath),
+                  File(thumbPath),
                   width: 400,
                   fit: BoxFit.fitWidth,
                   errorBuilder: (_, __, ___) {
@@ -2278,8 +2487,16 @@ class _VideoPlayerWidget extends StatefulWidget {
   final String source;
   final VoidCallback? onDelete;
   final VoidCallback? onDismissed;
+  /// 可选的 asset 解析器。注入后，asset:// 协议视频源会被解析为本地路径，
+  /// 本地缺失时显示"附件未同步"占位。未注入时退回旧行为。
+  final AssetResolver? assetResolver;
 
-  const _VideoPlayerWidget({required this.source, this.onDelete, this.onDismissed});
+  const _VideoPlayerWidget({
+    required this.source,
+    this.onDelete,
+    this.onDismissed,
+    this.assetResolver,
+  });
 
   @override
   State<_VideoPlayerWidget> createState() => _VideoPlayerWidgetState();
@@ -2293,13 +2510,58 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   int? _videoWidth;
   int? _videoHeight;
 
+  /// 解析后的视频源路径。仅当 [widget.assetResolver] 注入时使用。
+  /// null 表示仍在解析或本地缺失。
+  String? _resolvedSource;
+  bool _resolving = false;
+
   @override
   void initState() {
     super.initState();
-    _initPlayer();
+    _resolveAndInit();
   }
 
-  void _initPlayer() {
+  Future<void> _resolveAndInit() async {
+    final resolver = widget.assetResolver;
+    if (resolver == null) {
+      _initPlayer(widget.source);
+      return;
+    }
+    setState(() => _resolving = true);
+    String? resolved;
+    try {
+      resolved = await resolver.resolveLocalPath(widget.source);
+    } catch (e) {
+      debugPrint('[RichTextEditor] resolve video source failed for "${widget.source}": $e');
+    }
+    if (!mounted) return;
+    setState(() {
+      _resolvedSource = resolved;
+      _resolving = false;
+    });
+    if (resolved != null) {
+      _initPlayer(resolved);
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _VideoPlayerWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.source != widget.source) {
+      // 清理旧 player 资源后重新解析
+      _player?.dispose();
+      _player = null;
+      _controller = null;
+      _isInitialized = false;
+      _hasError = false;
+      _videoWidth = null;
+      _videoHeight = null;
+      _resolvedSource = null;
+      _resolveAndInit();
+    }
+  }
+
+  void _initPlayer(String source) {
     if (kIsWeb) return;
 
     try {
@@ -2315,7 +2577,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
           setState(() => _videoHeight = h);
         }
       });
-      _player!.open(Media(widget.source), play: false);
+      _player!.open(Media(source), play: false);
       _isInitialized = true;
     } catch (e) {
       debugPrint('VideoPlayer init error: $e');
@@ -2376,6 +2638,35 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   Widget build(BuildContext context) {
     if (kIsWeb) {
       return _buildWebVideo();
+    }
+
+    // 解析中
+    if (_resolving) {
+      return const SizedBox(
+        width: 400,
+        height: 225,
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    // 注入了解析器但解析为空：附件未同步占位
+    if (widget.assetResolver != null && _resolvedSource == null) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 8),
+          width: 400,
+          padding: const EdgeInsets.all(8),
+          color: Colors.grey.shade200,
+          child: const Row(
+            children: [
+              Icon(Icons.cloud_off, size: 16),
+              SizedBox(width: 4),
+              Text('附件未同步', style: TextStyle(fontSize: 12)),
+            ],
+          ),
+        ),
+      );
     }
 
     if (_hasError || !_isInitialized) {

@@ -18,6 +18,7 @@ class VideoStorageService {
   /// [extension] 文件扩展名，默认 mp4
   ///
   /// 返回视频文件的完整路径。
+  @Deprecated('由 AssetRepository.save 取代，2026-07-02 起停用。保留只为编译兼容。')
   Future<String> saveVideo(
     Uint8List videoBytes,
     String noteId, {
@@ -38,6 +39,7 @@ class VideoStorageService {
   }
 
   /// 删除笔记关联的所有视频
+  @Deprecated('由 NoteStorageService.deleteNote 内部维护引用计数取代，2026-07-02 起停用。保留只为编译兼容。')
   Future<void> deleteVideosForNote(String noteId) async {
     final appDir = await getApplicationDocumentsDirectory();
     final videoDir = Directory('${appDir.path}/videos/$noteId');
@@ -47,6 +49,7 @@ class VideoStorageService {
   }
 
   /// 删除单个视频文件及其缩略图
+  @Deprecated('由 AssetRepository 配合引用计数取代，2026-07-02 起停用。保留只为编译兼容。')
   Future<void> deleteVideo(String filePath) async {
     final file = File(filePath);
     if (file.existsSync()) {
